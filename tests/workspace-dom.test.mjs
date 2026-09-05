@@ -17,13 +17,29 @@ function fixture(desktop = false, appSource = source) {
     setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback),
   };
   vm.createContext(sandbox);
-  vm.runInContext(appSource.slice(0, appSource.lastIndexOf('\napp();')).replace(/^import .*;\r?\n/gm, '') + '\nthis.ui = { state, app };', sandbox);
+  vm.runInContext(appSource.slice(0, appSource.lastIndexOf('\napp();')).replace(/^import .*;\r?\n/gm, '') + '\nthis.ui = { state, app, chatHistoryStorageKey, rememberProject, activateMemoryProject };', sandbox);
   const { state, app } = sandbox.ui;
   Object.assign(state, { customPreview: true, previewUrl: 'http://localhost:3000/', localModelsLoaded: true });
   const render = () => { app(); while (frames.length) frames.shift()(); };
   render();
-  return { document, Event, state, app, render, frames, root: document.querySelector('#app') };
+  return { document, Event, state, app, render, frames, root: document.querySelector('#app'), ui: sandbox.ui };
 }
+
+test('Projects sidebar retains project folders and gives every project a separate chat key', async () => {
+  const f = fixture();
+  const firstId = f.state.activeProjectId;
+  const firstChatKey = f.ui.chatHistoryStorageKey();
+  const second = f.ui.rememberProject({ id:'memory:second', kind:'memory', name:'Second project' });
+  await f.ui.activateMemoryProject(second, { 'README.md':'# Second\n' });
+  assert.equal(f.state.projects.length, 2);
+  assert.equal(f.state.activeProjectId, second.id);
+  assert.notEqual(f.ui.chatHistoryStorageKey(), firstChatKey);
+  assert.equal(f.root.querySelectorAll('[data-project-id]').length, 2);
+  assert.equal(f.root.querySelector('.side-heading span').textContent, 'PROJECTS');
+  assert.ok(f.root.querySelector('#projects-add'));
+  assert.equal(f.root.querySelector('#workspaces'), null);
+  assert.equal(f.state.projects.some(project => project.id === firstId), true);
+});
 
 for (const desktop of [false, true]) {
   test(`${desktop ? 'desktop' : 'web'}: Explorer changes preserve preview, chat and draft`, () => {

@@ -161,9 +161,9 @@ const state = {
   cloudModels: Object.fromEntries(PROVIDERS.filter(item=>item.group==='Cloud').map(item=>[item.id, structuredClone(item.models || [])])), cloudModelsLoaded: {}, cloudModelLoading: {}, cloudModelError: {},
   messages: [], chatHistoryKey: '', editingMessageId: '', copiedMessageId: '', sending: false, turnProvider: null, stopRequested: false, abortController: null, stopPromise: null, stopReject: null, settingsOpen: false, modelPickerOpen: false, dirty: false, dirtyFiles: new Set(), vscodeNote: '', vscodeConsent: false, vscodeView: false, vscodeUrl: '',
   folders: { src: true, 'src/app': true, 'src/components': false }, previewUrl: localStorage.getItem('codeplus-preview-url') || 'http://localhost:3000', customPreview: Boolean(localStorage.getItem('codeplus-preview-url')),
-  projectName: localStorage.getItem('codeplus-project-name') || 'CodePlus', workspacesOpen: false, previewHidden: false, editorClosed: false, filesHidden: localStorage.getItem('codeplus-files-hidden') === 'true', downloadOpen: false,
+  projectName: localStorage.getItem('codeplus-project-name') || 'CodePlus', projects: [], activeProjectId: '', workspacesOpen: false, previewHidden: false, editorClosed: false, filesHidden: localStorage.getItem('codeplus-files-hidden') === 'true', downloadOpen: false,
   dirHandle: null, dirPath: '', treePaths: [], fileHandles: {}, loading: new Set(),
-  pendingHandle: null, pendingName: '',
+  pendingHandle: null, pendingName: '', pendingProjectId: '',
   plusOpen: false, attachPickerOpen: false, attached: [],
   shellOpen: false, shellBusy: false, shellOutputs: [],
   todos: [],
@@ -232,7 +232,7 @@ function normalizeMessages(items) {
   }));
 }
 function chatHistoryStorageKey() {
-  const workspace = state.dirPath ? `path:${state.dirPath}` : state.dirHandle?.name ? `folder:${state.dirHandle.name}` : `memory:${state.projectName || 'CodePlus'}`;
+  const workspace = state.activeProjectId || (state.dirPath ? `path:${state.dirPath}` : state.dirHandle?.name ? `folder:${state.dirHandle.name}` : `memory:${state.projectName || 'CodePlus'}`);
   return `chat-history:${workspace}`;
 }
 let chatSaveTimer = null;
@@ -272,15 +272,58 @@ function appendMessage(message) {
   persistChatHistory();
   return item;
 }
-async function persistWorkspaceSession() {
-  localStorage.setItem('codeplus-active-file', state.active || '');
-  if (state.dirHandle) await idbSet('workspace', state.dirHandle).catch(() => {});
-  else if (state.dirPath) { localStorage.setItem('codeplus-dir-path', state.dirPath); idbDel('workspace'); }
-  else clearWorkspaceSession();
+const PROJECTS_KEY = 'codeplus-projects-v1';
+const ACTIVE_PROJECT_KEY = 'codeplus-active-project';
+function newProjectId(kind='memory') { return `${kind}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2,9)}`; }
+function projectValueKey(name, id=state.activeProjectId) { return `codeplus-project-${name}:${id || 'default'}`; }
+function loadProjectRegistry() {
+  try {
+    const items = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]');
+    state.projects = Array.isArray(items) ? items.filter(item => item?.id && item?.name && ['native','handle','memory'].includes(item.kind)) : [];
+  } catch { state.projects = []; }
+  state.activeProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY) || '';
 }
-function clearWorkspaceSession() { localStorage.removeItem('codeplus-active-file'); localStorage.removeItem('codeplus-dir-path'); idbDel('workspace'); }
+function saveProjectRegistry() {
+  localStorage.setItem(PROJECTS_KEY, JSON.stringify(state.projects));
+  if (state.activeProjectId) localStorage.setItem(ACTIVE_PROJECT_KEY, state.activeProjectId);
+}
+function rememberProject(project) {
+  const index = state.projects.findIndex(item => item.id === project.id);
+  const next = { ...(index >= 0 ? state.projects[index] : {}), ...project, updatedAt: Date.now() };
+  if (index >= 0) state.projects.splice(index, 1, next); else state.projects.push(next);
+  saveProjectRegistry();
+  return next;
+}
+function currentProject() { return state.projects.find(item => item.id === state.activeProjectId) || null; }
+async function persistMemoryProject() {
+  if (currentProject()?.kind === 'memory') await idbSet(`project-files:${state.activeProjectId}`, structuredClone(state.files)).catch(() => {});
+}
+async function persistWorkspaceSession() {
+  if (!state.activeProjectId) return;
+  localStorage.setItem(projectValueKey('active-file'), state.active || '');
+  localStorage.setItem(projectValueKey('preview-url'), state.previewUrl || 'http://localhost:3000');
+  localStorage.setItem(projectValueKey('custom-preview'), String(state.customPreview));
+  localStorage.setItem('codeplus-project-name', state.projectName);
+  if (state.dirHandle) await idbSet(`project-handle:${state.activeProjectId}`, state.dirHandle).catch(() => {});
+  await persistMemoryProject();
+  saveProjectRegistry();
+}
+function clearWorkspaceSession() {
+  localStorage.removeItem('codeplus-active-file');
+  localStorage.removeItem('codeplus-dir-path');
+  idbDel('workspace');
+}
+loadProjectRegistry();
+if (!state.projects.length) {
+  const legacyNative = localStorage.getItem('codeplus-dir-path');
+  if (!legacyNative) {
+    const project = rememberProject({ id:'memory:default', kind:'memory', name:state.projectName || 'CodePlus', bootstrap:true });
+    state.activeProjectId = project.id;
+  }
+}
 const el = (strings, ...values) => strings.reduce((out, s, i) => out + s + (values[i] ?? ''), '');
 function escape(text) { return String(text ?? '').replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
+function escapeAttr(text) { return escape(text).replace(/["']/g, c => c === '"' ? '&quot;' : '&#39;'); }
 function lineNumbers(text) { return Array.from({ length: Math.max(1, text.split('\n').length) }, (_, index) => `<span>${index + 1}</span>`).join(''); }
 function highlightCode(text) {
   if (text.length > 60000 || text.split('\n').length > 1200) return escape(text);
@@ -311,6 +354,21 @@ function fileTree() {
     return row(open?'▾':'▸',glyph,name,type,depth,'',path) + (open ? visit(child,depth+1,path) : '');
   }).join('');
   return visit(root);
+}
+function projectsTree() {
+  if (!state.projects.length) return '<div class="projects-empty">Use + to create or open a project.</div>';
+  return state.projects.map(project => {
+    const active = project.id === state.activeProjectId;
+    const needsReconnect = project.id === state.pendingProjectId;
+    return `<section class="project-node ${active ? 'active' : ''}">
+      <div class="project-row" data-project-id="${escapeAttr(project.id)}" title="Open ${escapeAttr(project.name)}">
+        <span class="project-chevron">${active ? '▾' : '▸'}</span><span class="project-folder"></span><strong>${escape(project.name)}</strong>
+        ${active ? '<button type="button" class="project-file-add" id="new-file" title="New file in this project">＋</button>' : ''}
+      </div>
+      ${needsReconnect ? '<button type="button" class="project-reconnect" id="reconnect-ws">Reconnect folder</button>' : ''}
+      ${active ? `<div class="project-files">${fileTree()}</div>` : ''}
+    </section>`;
+  }).join('');
 }
 function preview() {
   if (!state.customPreview) return `<div class="preview-card"><span class="preview-badge">CODEPLUS</span><h1>Build faster with your own AI stack.</h1><p>One focused workspace for browser and desktop. The preview updates as you edit.</p><div class="preview-actions"><button>Start building</button><button>View docs</button></div></div>`;
@@ -516,6 +574,7 @@ async function agentWrite(filePath, content, audit = null) {
   }
   if (fsMode()==='memory') {
     state.files[filePath] = String(content);
+    await persistMemoryProject();
   } else {
     await writeFileAt(filePath, String(content));
     state.files[filePath] = String(content);
@@ -907,14 +966,14 @@ function app(forcePreviewReload = false) {
   document.body.style.minWidth = '';
   const activeName = state.active.split('/').at(-1);
   const previewPanel = `<div class="preview studio-preview" data-panel="preview">${previewAddress()}<div class="preview-body">${preview()}</div></div>`;
-  const explorerToggle = `<button class="icon-btn" id="toggle-files" title="${state.filesHidden ? 'Show' : 'Hide'} Explorer">☰</button>`;
+  const explorerToggle = `<button class="icon-btn" id="toggle-files" title="${state.filesHidden ? 'Show' : 'Hide'} Projects">☰</button>`;
   // Keep the preview's entire ancestor chain connected across file, layout,
   // and VS Code view changes. CSS controls which editor occupies the grid.
   const workspace = `<section class="work" data-panel="work"><div class="tabs" data-panel="tabs"><div class="tab ${state.editorClosed ? 'tab-empty' : ''}">${state.editorClosed ? 'Preview' : `⌘ ${escape(activeName)}<button class="tab-close" id="close-file" type="button" title="Close ${escape(activeName)}">×</button>`}</div><div class="tab-actions">${explorerToggle}${state.editorClosed ? '' : `<button class="icon-btn" id="format" title="Format active file">⌁</button><button class="icon-btn" id="toggle-preview" title="${state.previewHidden?'Show':'Hide'} preview">◱</button>`}</div></div><div class="editor-grid ${state.editorClosed ? 'editor-closed' : state.previewHidden ? 'preview-hidden' : ''}" data-panel="editor-grid"><div class="editor" data-panel="editor"><div class="pane-title"><span>${escape(state.active)}</span><span class="language">${state.active.endsWith('.css')?'CSS':state.active.endsWith('.md')?'Markdown':'TypeScript React'}</span></div><div class="code-shell"><div class="line-numbers" id="line-numbers" aria-hidden="true">${lineNumbers(state.files[state.active] ?? '')}</div><div class="code-layer"><pre class="code-highlight" id="code-highlight" aria-hidden="true">${highlightCode(state.files[state.active] ?? '')}</pre><textarea class="code" id="code" spellcheck="false" wrap="off">${escape(state.files[state.active] ?? '')}</textarea></div></div></div><section class="vscode-panel" data-panel="vscode">${state.vscodeUrl ? `<div class="vscode-panel-bar"><strong>⌘ VS Code · CodePlus</strong><span>Local workspace</span><button id="close-vscode">Return to CodePlus editor</button></div><iframe title="VS Code workspace" src="${escape(state.vscodeUrl)}"></iframe>` : ''}</section>${previewPanel}</div></section>`;
   const appRoot = document.querySelector('#app');
   const workspaceMarkup = el`<main class="shell ${state.vscodeView ? 'vscode-mode' : ''} ${state.filesHidden ? 'files-hidden' : ''}">
-    <header class="topbar"><div class="brand"><img class="brand-logo" src="/assets/codeplus-logo.png" alt="CodePlus" />CodePlus</div><button class="crumb workspace-trigger" id="workspaces">Workspaces /</button><span class="project">${escape(state.projectName)}</span>${updateButton()}<button class="vscode" id="open-vscode" ${state.vscodeView ? 'disabled' : ''}>${state.vscodeView ? '⌘ VS Code active' : '⌘ VS Code workspace'}</button></header>
-    <aside class="files"><div class="side-heading"><span>EXPLORER</span><button class="small-btn" id="new-file" title="New file">＋</button></div><div class="tree">${fileTree()}</div><div class="workspace-card"><strong>${fsMode()==='memory' ? 'Local-first project' : escape(state.projectName)}</strong><span>${state.pendingHandle ? `${escape(state.pendingName)} needs reconnect after refresh.` : fsMode()==='memory' ? 'Files are kept in this browser session.' : `Editing directly on disk — ${state.treePaths.length} files. Saves write straight to the folder.`}</span>${state.pendingHandle ? '<button id="reconnect-ws">Reconnect folder</button>' : ''}<button id="export-project">Export project JSON</button></div></aside>
+    <header class="topbar"><div class="brand"><img class="brand-logo" src="/assets/codeplus-logo.png" alt="CodePlus" />CodePlus</div>${updateButton()}<button class="vscode" id="open-vscode" ${state.vscodeView ? 'disabled' : ''}>${state.vscodeView ? '⌘ VS Code active' : '⌘ VS Code workspace'}</button></header>
+    <aside class="files"><div class="side-heading"><span>PROJECTS</span><button class="small-btn" id="projects-add" title="Open or create project">＋</button></div><div class="projects-tree">${projectsTree()}</div><div class="workspace-card"><strong>${escape(state.projectName)}</strong><span>${state.pendingHandle ? `${escape(state.pendingName)} needs reconnect after refresh.` : fsMode()==='memory' ? 'This project and its chat are stored separately in this browser.' : `Editing directly on disk — ${state.treePaths.length} files. Saves write straight to the folder.`}</span><button id="export-project">Export project JSON</button></div></aside>
     ${workspace}
     <aside class="assistant"><div class="ai-head"><strong>Coding Agent</strong><span>Workspace tools enabled</span><button class="icon-btn gear" id="settings" title="Model settings">⚙</button></div><div class="chat" id="chat">${messages()}</div><form class="composer" id="composer">${composerExtras()}<textarea id="prompt" placeholder="Ask ${escape(compactModelName(state.model || 'a model', '', 32))} to build, edit, test, or debug your code…" ${state.sending ? 'disabled' : ''}>${escape(state.draftPrompt || '')}</textarea><div class="composer-foot"><div class="composer-tools">${state.plusOpen ? `<div class="plus-menu" role="menu"><button type="button" data-plus-action="files">⬆ <span>Files</span><small>Choose from My Computer</small></button><button type="button" data-plus-action="shell">$ <span>Shell Output</span><small>Run and attach a command result</small></button></div>` : ''}<button type="button" class="plus-btn" id="plus-btn" title="Attach optional context" aria-haspopup="menu" aria-expanded="${state.plusOpen}">＋</button><button type="button" class="model-chip" id="model-chip" title="${escape(`${state.provider}: ${state.model || 'Choose a model'}`)}"><span class="dot"></span><span>${escape(providerLabel())}</span></button></div>${state.sending ? '<button class="send stop" id="stop" type="button" title="Stop response" aria-label="Stop response"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" rx="1" /></svg></button>' : '<button class="send" id="send" type="submit" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg></button>'}</div></form></aside>
     <footer class="status"><span>◉ <span class="branch">main</span></span><span>${fsMode()==='memory' ? Object.keys(state.files).length : state.treePaths.length} files</span><span>${state.dirtyFiles.size ? `● ${state.dirtyFiles.size} unsaved — ⌘/Ctrl+S to save` : '✓ saved locally'}</span><span class="live">● Local workspace</span></footer>
@@ -1238,8 +1297,12 @@ async function writeFileAt(path, content) {
 }
 async function saveActiveFile() {
   const path = state.active;
-  if (!path || fsMode()==='memory' || state.files[path]==null) return;
-  try { await writeFileAt(path, state.files[path]); state.dirtyFiles.delete(path); if (state.active===path) state.dirty=false; app(); }
+  if (!path || state.files[path]==null) return;
+  try {
+    if (fsMode()==='memory') await persistMemoryProject(); else await writeFileAt(path, state.files[path]);
+    state.dirtyFiles.delete(path); if (state.active===path) state.dirty=false;
+    localStorage.setItem(projectValueKey('active-file'), path); app();
+  }
   catch (error) { state.vscodeNote = `Could not save ${path.split('/').pop()}: ${error.message || error}`; app(); }
 }
 async function getDevRoot() {
@@ -1293,7 +1356,8 @@ async function tryAutoStartDevServer() {
       }
       state.previewUrl = url || 'http://localhost:3000/';
       state.customPreview = true;
-      localStorage.setItem('codeplus-preview-url', state.previewUrl);
+      localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
+      localStorage.setItem(projectValueKey('custom-preview'), 'true');
       state.devRunning = true; state.devStarting = false;
       state.vscodeNote = `Dev server running at ${state.previewUrl}`;
       app();
@@ -1302,7 +1366,8 @@ async function tryAutoStartDevServer() {
       state.devStarting = false; state.devRunning = false;
       state.previewUrl = 'http://localhost:3000/';
       state.customPreview = true;
-      localStorage.setItem('codeplus-preview-url', state.previewUrl);
+      localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
+      localStorage.setItem(projectValueKey('custom-preview'), 'true');
       let msg = e.message || String(e);
       if (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('fetch')) {
         msg = 'Could not connect to CodePlus server at 127.0.0.1:4173. Run `npm run dev` in the project root, or use the desktop app (which has its own server).';
@@ -1313,7 +1378,8 @@ async function tryAutoStartDevServer() {
   } else if (state.dirHandle) {
     state.previewUrl = 'http://localhost:3000/';
     state.customPreview = true;
-    localStorage.setItem('codeplus-preview-url', state.previewUrl);
+    localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
+    localStorage.setItem(projectValueKey('custom-preview'), 'true');
     state.vscodeNote = 'Preview set to http://localhost:3000/. Run `npm run dev` in your terminal to start the dev server, or click ▶ in the preview bar and enter the project path to auto-start.';
     app();
   }
@@ -1357,7 +1423,8 @@ async function toggleDevServer() {
       }
       state.previewUrl = url || 'http://localhost:3000/';
       state.customPreview = true;
-      localStorage.setItem('codeplus-preview-url', state.previewUrl);
+      localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
+      localStorage.setItem(projectValueKey('custom-preview'), 'true');
       state.devRunning = true; state.devStarting = false;
       state.vscodeNote = `Dev server running at ${state.previewUrl}`;
       app();
@@ -1389,7 +1456,8 @@ async function refreshDevStatus() {
           if (running && data.url && data.url !== state.previewUrl) {
             state.previewUrl = data.url;
             state.customPreview = true;
-            localStorage.setItem('codeplus-preview-url', state.previewUrl);
+            localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
+            localStorage.setItem(projectValueKey('custom-preview'), 'true');
             const f = document.querySelector('.preview-frame');
             if (f) f.src = state.previewUrl;
           }
@@ -1403,7 +1471,10 @@ async function refreshDevStatus() {
 }
 
 async function activateWorkspace(source) {
+  if (state.sending) throw new Error('Stop the current agent response before switching projects.');
+  if (state.activeProjectId && source.project?.id !== state.activeProjectId && state.dirtyFiles.size) throw new Error('Save your unsaved files before switching projects.');
   await flushChatHistory();
+  await persistWorkspaceSession();
   const prevRoot = state.dirPath || (state.projectName ? localStorage.getItem('codeplus-dev-path:' + state.projectName) : '') || '';
   const newRoot = source.native || '';
   if (prevRoot && newRoot && prevRoot !== newRoot && state.devRunning) {
@@ -1423,51 +1494,122 @@ async function activateWorkspace(source) {
   }
   state.dirHandle = source.handle || null;
   state.dirPath = source.native || '';
-  state.projectName = (source.handle && source.handle.name) || String(source.native || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'Workspace';
+  state.activeProjectId = source.project?.id || state.activeProjectId;
+  state.projectName = source.project?.name || (source.handle && source.handle.name) || String(source.native || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'Project';
   state.files = {}; state.treePaths = []; state.dirty = false; state.dirtyFiles.clear(); state.editorClosed = false;
+  state.folders = {};
+  state.pendingHandle = null; state.pendingName = '';
+  state.previewUrl = localStorage.getItem(projectValueKey('preview-url')) || 'http://localhost:3000';
+  state.customPreview = localStorage.getItem(projectValueKey('custom-preview')) === 'true';
   await scanWorkspace();
-  const remembered = localStorage.getItem('codeplus-active-file') || '';
+  const remembered = localStorage.getItem(projectValueKey('active-file')) || '';
   state.active = state.treePaths.includes(remembered) ? remembered : (state.treePaths.find(path => /(^|\/)(readme\.(md|txt|mdx)|index\.html)$/i.test(path)) || state.treePaths[0] || '');
-  localStorage.setItem('codeplus-project-name', state.projectName);
-  localStorage.setItem('codeplus-active-file', state.active);
+  await persistWorkspaceSession();
   await loadChatHistory();
   app();
   if (state.active) await ensureLoaded(state.active);
   tryAutoStartDevServer();
   return state.treePaths.length;
 }
+async function projectForSource(source, explicitName='') {
+  if (source.native) {
+    const existing = state.projects.find(item => item.kind === 'native' && item.path === source.native);
+    const id = existing?.id || newProjectId('native');
+    return rememberProject({ id, kind:'native', name:explicitName || String(source.native).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'Project', path:source.native });
+  }
+  if (source.handle) {
+    for (const project of state.projects.filter(item => item.kind === 'handle')) {
+      const saved = await idbGet(`project-handle:${project.id}`).catch(() => null);
+      try { if (saved && await source.handle.isSameEntry(saved)) return rememberProject({ ...project, name:explicitName || source.handle.name || project.name }); } catch {}
+    }
+    const project = rememberProject({ id:newProjectId('handle'), kind:'handle', name:explicitName || source.handle.name || 'Project' });
+    await idbSet(`project-handle:${project.id}`, source.handle).catch(() => {});
+    return project;
+  }
+  return null;
+}
+async function activateMemoryProject(project, files=null, note='') {
+  if (state.sending) throw new Error('Stop the current agent response before switching projects.');
+  if (state.activeProjectId && project.id !== state.activeProjectId && state.dirtyFiles.size) throw new Error('Save your unsaved files before switching projects.');
+  await flushChatHistory();
+  await persistWorkspaceSession();
+  state.activeProjectId = project.id; state.projectName = project.name;
+  state.dirHandle = null; state.dirPath = ''; state.pendingHandle = null; state.pendingName = '';
+  state.files = structuredClone(files || await idbGet(`project-files:${project.id}`).catch(() => null) || initialFiles);
+  state.treePaths = []; state.fileHandles = {}; state.folders = {}; state.dirty = false; state.dirtyFiles.clear(); state.editorClosed = false;
+  state.previewUrl = localStorage.getItem(projectValueKey('preview-url')) || 'http://localhost:3000';
+  state.customPreview = localStorage.getItem(projectValueKey('custom-preview')) === 'true';
+  const paths = Object.keys(state.files);
+  const remembered = localStorage.getItem(projectValueKey('active-file')) || '';
+  state.active = paths.includes(remembered) ? remembered : (paths.find(path => /(^|\/)(readme\.(md|txt|mdx)|index\.html)$/i.test(path)) || paths[0] || '');
+  state.workspacesOpen = false; state.vscodeNote = note;
+  await persistWorkspaceSession();
+  await loadChatHistory();
+  app();
+  return paths.length;
+}
+async function switchProject(projectId) {
+  if (!projectId || projectId === state.activeProjectId) return;
+  const project = state.projects.find(item => item.id === projectId);
+  if (!project) return;
+  try {
+    if (project.kind === 'native') await activateWorkspace({ native:project.path, project });
+    else if (project.kind === 'memory') await activateMemoryProject(project);
+    else {
+      const handle = await idbGet(`project-handle:${project.id}`).catch(() => null);
+      if (!handle) throw new Error(`${project.name} needs to be opened again.`);
+      let permission = 'prompt';
+      try { permission = await handle.queryPermission({ mode:'readwrite' }); } catch {}
+      if (permission !== 'granted') {
+        state.pendingHandle = handle; state.pendingName = project.name; state.pendingProjectId = project.id;
+        state.vscodeNote = `${project.name} needs folder permission. Click Reconnect.`; app(); return;
+      }
+      await activateWorkspace({ handle, project });
+    }
+    state.vscodeNote = `Switched to ${project.name}.`; app();
+  } catch (error) { state.vscodeNote = error.message || String(error); app(); }
+}
 async function openWorkspaceFolder() {
   try {
+    if (state.sending) throw new Error('Stop the current agent response before opening a project.');
+    if (state.dirtyFiles.size) throw new Error('Save your unsaved files before opening a project.');
     const pick = await pickWorkspaceFolder();
     if (!pick) return;
     state.workspacesOpen = false;
-    const count = await activateWorkspace(pick);
-    await persistWorkspaceSession();
+    const project = await projectForSource(pick);
+    const count = await activateWorkspace({ ...pick, project });
     state.vscodeNote = count ? `Opened ${state.projectName} from disk — ${count} files. It stays connected after a page refresh.` : 'No readable text files found in that folder.';
     app();
   } catch (error) { state.workspacesOpen = false; state.vscodeNote = error.message || String(error); app(); }
 }
 async function restoreWorkspace() {
   try {
-    const savedNative = localStorage.getItem('codeplus-dir-path');
-    if (savedNative && (window.__TAURI_INTERNALS__ || isLocalHost())) {
-      const count = await activateWorkspace({ native: savedNative });
-      state.vscodeNote = count ? `Reconnected ${state.projectName} — ${count} files.` : '';
-      app();
-      return;
+    const bootstrapOnly = state.projects.length === 1 && state.projects[0].bootstrap;
+    if (!state.projects.length || bootstrapOnly) {
+      const savedNative = localStorage.getItem('codeplus-dir-path');
+      const oldHandle = await idbGet('workspace').catch(() => null);
+      if ((savedNative && (window.__TAURI_INTERNALS__ || isLocalHost())) || oldHandle) state.projects = [];
+      if (savedNative && (window.__TAURI_INTERNALS__ || isLocalHost())) await projectForSource({ native:savedNative });
+      else if (oldHandle) await projectForSource({ handle:oldHandle });
+      else {
+        const project = rememberProject({ ...(state.projects[0] || {}), id:state.projects[0]?.id || newProjectId('memory'), kind:'memory', name:state.projectName || 'CodePlus', bootstrap:false });
+        await idbSet(`project-files:${project.id}`, structuredClone(state.files)).catch(() => {});
+      }
+      clearWorkspaceSession();
     }
-    if (!('showDirectoryPicker' in window)) return;
-    const handle = await idbGet('workspace').catch(() => null);
-    if (!handle) return;
-    let permission = 'granted';
-    try { permission = await handle.queryPermission({ mode: 'readwrite' }); } catch {}
-    if (permission === 'granted') {
-      const count = await activateWorkspace({ handle });
-      if (count) { state.vscodeNote = `Reconnected ${state.projectName} — ${count} files.`; app(); }
-    } else {
-      state.pendingHandle = handle;
-      state.pendingName = handle.name || 'your project folder';
-      app();
+    const preferred = state.projects.find(item => item.id === state.activeProjectId) || state.projects[0];
+    state.activeProjectId = '';
+    if (preferred.kind === 'native') await activateWorkspace({ native:preferred.path, project:preferred });
+    else if (preferred.kind === 'memory') await activateMemoryProject(preferred);
+    else {
+      const handle = await idbGet(`project-handle:${preferred.id}`).catch(() => null);
+      let permission = 'prompt';
+      try { permission = handle ? await handle.queryPermission({ mode:'readwrite' }) : 'prompt'; } catch {}
+      if (handle && permission === 'granted') await activateWorkspace({ handle, project:preferred });
+      else {
+        state.activeProjectId = preferred.id; state.projectName = preferred.name;
+        state.pendingHandle = handle; state.pendingName = preferred.name; state.pendingProjectId = preferred.id; saveProjectRegistry(); app();
+      }
     }
   } catch {}
 }
@@ -1478,8 +1620,9 @@ async function reconnectWorkspace() {
     let permission = 'prompt';
     try { permission = await handle.requestPermission({ mode: 'readwrite' }); } catch {}
     if (permission !== 'granted') throw new Error('Folder permission was not granted.');
-    state.pendingHandle = null;
-    const count = await activateWorkspace({ handle });
+    const project = state.projects.find(item => item.id === state.pendingProjectId) || await projectForSource({ handle });
+    state.pendingHandle = null; state.pendingProjectId = '';
+    const count = await activateWorkspace({ handle, project });
     state.vscodeNote = `Reconnected ${state.projectName} — ${count} files.`;
     app();
   } catch (error) { state.vscodeNote = error.message || 'Could not reconnect the folder.'; app(); }
@@ -1487,7 +1630,7 @@ async function reconnectWorkspace() {
 function vscodeConsentModal() { return `<div class="modal-backdrop"><section class="modal vscode-consent" role="dialog" aria-modal="true"><h2>Start VS Code in CodePlus</h2><p>CodePlus will run the installed VS Code web server on <code>127.0.0.1:8765</code> and open the current CodePlus folder. It is available only on this Mac.</p><label class="license-check"><input id="vscode-license" type="checkbox" /> I accept the Visual Studio Code Server license terms.</label><div class="modal-actions"><button id="cancel-vscode">Cancel</button><button class="primary" id="start-vscode" disabled>Start workspace</button></div></section></div>`; }
 function workspaceModal() {
   const canDisk = Boolean(window.__TAURI_INTERNALS__ || isLocalHost() || ('showDirectoryPicker' in window));
-  return `<div class="modal-backdrop"><section class="modal workspace-modal" role="dialog" aria-modal="true"><h2>Workspaces</h2><p>Work directly on a folder from your disk — nothing is uploaded, files load as you click them (opencode-style). Or create a new starter project in a folder you choose.</p>${canDisk ? '<button type="button" class="import-project" id="open-folder"><strong>Open project folder…</strong><span>Pick any folder on this machine. CodePlus edits it in place.</span></button><div class="workspace-divider"><span>New project</span></div>' : ''}<form id="create-workspace"><div class="field"><label for="workspace-name">New project name</label><input id="workspace-name" value="New CodePlus project" required maxlength="80" /></div>${canDisk ? '<small class="workspace-help">You will pick the parent folder next. Starter files are written to disk immediately.</small>' : ''}<div class="modal-actions"><button type="button" id="cancel-workspaces">Cancel</button><button class="primary" type="submit">Create project</button></div></form>${canDisk ? '' : '<div class="workspace-divider"><span>or import a copy</span></div><label class="import-project" for="import-project"><strong>Import existing project folder</strong><span>Your browser cannot edit folders on disk, so a copy opens here.</span></label><input id="import-project" type="file" webkitdirectory directory multiple hidden />'}</section></div>`;
+  return `<div class="modal-backdrop"><section class="modal workspace-modal" role="dialog" aria-modal="true"><h2>Add a project</h2><p>Open an existing project folder or create a new starter. Existing projects and their chats stay in the Projects list.</p>${canDisk ? '<button type="button" class="import-project" id="open-folder"><strong>Open project folder…</strong><span>Pick any folder on this machine. CodePlus edits it in place.</span></button><div class="workspace-divider"><span>New project</span></div>' : ''}<form id="create-workspace"><div class="field"><label for="workspace-name">New project name</label><input id="workspace-name" value="New CodePlus project" required maxlength="80" /></div>${canDisk ? '<small class="workspace-help">You will pick the parent folder next. Starter files are written to disk immediately.</small>' : ''}<div class="modal-actions"><button type="button" id="cancel-workspaces">Cancel</button><button class="primary" type="submit">Create project</button></div></form>${canDisk ? '' : '<div class="workspace-divider"><span>or upload a copy</span></div><label class="import-project" for="import-project"><strong>Upload existing project folder</strong><span>The project copy and its chat are stored separately in this browser.</span></label><input id="import-project" type="file" webkitdirectory directory multiple hidden />'}</section></div>`;
 }
 function formatActiveFile() {
   const source=state.files[state.active];
@@ -1511,22 +1654,23 @@ function formatActiveFile() {
   app();
 }
 async function chooseWorkspace(name, files, note) {
-  await flushChatHistory();
-  state.files=files; state.active=Object.keys(files)[0] || ''; state.projectName=name; state.folders={}; state.dirty=false; state.dirtyFiles.clear(); state.workspacesOpen=false; state.vscodeNote=note;
-  state.dirHandle=null; state.dirPath=''; state.treePaths=[]; state.pendingHandle=null;
-  clearWorkspaceSession();
-  localStorage.setItem('codeplus-project-name', name);
-  await loadChatHistory();
-  app();
+  const project = rememberProject({ id:newProjectId('memory'), kind:'memory', name });
+  await idbSet(`project-files:${project.id}`, structuredClone(files)).catch(() => {});
+  await activateMemoryProject(project, files, note);
 }
 async function createWorkspace(event) {
   event.preventDefault(); const raw=document.querySelector('#workspace-name').value.trim(); const name=raw.replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,' ').slice(0,80);
   if (!name) return;
+  if (state.sending || state.dirtyFiles.size) {
+    state.vscodeNote = state.sending ? 'Stop the current agent response before creating a project.' : 'Save your unsaved files before creating a project.';
+    state.workspacesOpen = false; app(); return;
+  }
   const starters = structuredClone(initialFiles);
   const canDisk = Boolean(window.__TAURI_INTERNALS__ || isLocalHost() || ('showDirectoryPicker' in window));
   if (canDisk) {
     try {
       await flushChatHistory();
+      await persistWorkspaceSession();
       const pick = await pickWorkspaceFolder();
       if (!pick) return;
       state.files = {}; state.treePaths = []; state.fileHandles = {}; state.dirty = false; state.dirtyFiles.clear(); state.editorClosed = false;
@@ -1541,9 +1685,10 @@ async function createWorkspace(event) {
         for (const [rel, content] of Object.entries(starters)) await writeWorkspaceText(root, rel, content);
         await scanWorkspace();
       }
+      const project = await projectForSource(state.dirHandle ? { handle:state.dirHandle } : { native:state.dirPath }, name);
+      state.activeProjectId = project.id;
       state.active = Object.keys(starters)[0];
       state.workspacesOpen = false;
-      localStorage.setItem('codeplus-project-name', name);
       await persistWorkspaceSession();
       await loadChatHistory();
       state.vscodeNote = `Created ${name} on disk and opened it.`;
@@ -1554,6 +1699,10 @@ async function createWorkspace(event) {
   await chooseWorkspace(name, starters, `Created ${name} in this browser session. Your browser cannot edit folders on disk.`);
 }
 async function importWorkspace(event) {
+  if (state.sending || state.dirtyFiles.size) {
+    state.vscodeNote = state.sending ? 'Stop the current agent response before uploading a project.' : 'Save your unsaved files before uploading a project.';
+    state.workspacesOpen = false; app(); return;
+  }
   const selected=Array.from(event.target.files || []).filter(file => isTextFile(file.name) && file.size <= 5_000_000).slice(0, 3000);
   if (!selected.length) return; const entries=await Promise.all(selected.map(async file => { const parts=(file.webkitRelativePath || file.name).split('/'); return [parts.length > 1 ? parts.slice(1).join('/') : file.name, await file.text()]; }));
   const files=Object.fromEntries(entries.filter(([name]) => name)); const root=(selected[0].webkitRelativePath || '').split('/')[0] || 'Imported project';
@@ -1561,8 +1710,9 @@ async function importWorkspace(event) {
 }
 function bind() {
   bindExternalLinks();
-  document.querySelectorAll('[data-file]').forEach(row => listen(row, 'click', () => { const f = row.dataset.file; if (!f) return; const promptVal = document.querySelector('#prompt')?.value || ''; if (promptVal) state.draftPrompt = promptVal; state.active=f; state.editorClosed=false; state.dirty=state.dirtyFiles.has(f); localStorage.setItem('codeplus-active-file', f); app(); if (fsMode()!=='memory') ensureLoaded(f); }));
+  document.querySelectorAll('[data-file]').forEach(row => listen(row, 'click', () => { const f = row.dataset.file; if (!f) return; const promptVal = document.querySelector('#prompt')?.value || ''; if (promptVal) state.draftPrompt = promptVal; state.active=f; state.editorClosed=false; state.dirty=state.dirtyFiles.has(f); localStorage.setItem(projectValueKey('active-file'), f); app(); if (fsMode()!=='memory') ensureLoaded(f); }));
   document.querySelectorAll('[data-folder]').forEach(row => listen(row, 'click', () => { const folder=row.dataset.folder; state.folders[folder]=!state.folders[folder]; app(); }));
+  document.querySelectorAll('[data-project-id]').forEach(row => listen(row, 'click', event => { if (event.target.closest('button')) return; switchProject(row.dataset.projectId); }));
   listen(document.querySelector('#code'), 'input', e => { state.files[state.active]=e.target.value; state.dirty=true; state.dirtyFiles.add(state.active); document.querySelector('#line-numbers').innerHTML=lineNumbers(e.target.value); document.querySelector('#code-highlight').innerHTML=highlightCode(e.target.value); document.querySelector('.status span:nth-child(3)').textContent=`● ${state.dirtyFiles.size} unsaved — ⌘/Ctrl+S to save`; });
   listen(document.querySelector('#code'), 'scroll', e => { document.querySelector('#line-numbers').scrollTop=e.target.scrollTop; const highlight=document.querySelector('#code-highlight'); highlight.style.transform=`translate(${-e.target.scrollLeft}px, ${-e.target.scrollTop}px)`; });
   listen(document.querySelector('#code'), 'keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase()==='s') { e.preventDefault(); saveActiveFile(); return; } if (e.key !== 'Tab') return; e.preventDefault(); const code=e.currentTarget; code.setRangeText('  ', code.selectionStart, code.selectionEnd, 'end'); code.dispatchEvent(new Event('input')); });
@@ -1570,12 +1720,12 @@ function bind() {
   listen(document.querySelector('#toggle-preview'), 'click', () => { state.previewHidden=!state.previewHidden; app(); });
   listen(document.querySelector('#toggle-files'), 'click', () => { state.filesHidden=!state.filesHidden; localStorage.setItem('codeplus-files-hidden',String(state.filesHidden)); app(); });
   listen(document.querySelector('#close-file'), 'click', () => { state.editorClosed=true; state.previewHidden=false; app(); });
-  listen(document.querySelector('#new-file'), 'click', async () => { const name=prompt('File path, e.g. src/components/button.tsx'); if (!name) return; if (state.files[name]==null) state.files[name]='// New file\n'; if (fsMode()!=='memory') { try { await writeFileAt(name, state.files[name]); if (!state.treePaths.includes(name)) { state.treePaths.push(name); state.treePaths.sort(); } } catch (error) { state.vscodeNote=`Could not create ${name} on disk.`; app(); return; } } state.active=name; state.editorClosed=false; state.dirty=state.dirtyFiles.has(name); app(); });
+  listen(document.querySelector('#new-file'), 'click', async event => { event.stopPropagation(); const name=prompt('File path, e.g. src/components/button.tsx'); if (!name) return; if (state.files[name]==null) state.files[name]='// New file\n'; if (fsMode()!=='memory') { try { await writeFileAt(name, state.files[name]); if (!state.treePaths.includes(name)) { state.treePaths.push(name); state.treePaths.sort(); } } catch (error) { state.vscodeNote=`Could not create ${name} on disk.`; app(); return; } } else await persistMemoryProject(); state.active=name; state.editorClosed=false; state.dirty=state.dirtyFiles.has(name); localStorage.setItem(projectValueKey('active-file'), name); app(); });
   listen(document.querySelector('#export-project'), 'click', () => { const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state.files,null,2)],{type:'application/json'}));a.download='codeplus-project.json';a.click();URL.revokeObjectURL(a.href); });
   listen(document.querySelector('#settings'), 'click', openProviderSettings);
   listen(document.querySelector('#open-vscode'), 'click', () => { state.vscodeConsent=true; app(); });
-  listen(document.querySelector('#workspaces'), 'click', () => { state.workspacesOpen=true; app(); });
-  document.querySelectorAll('#preview-form').forEach(form => listen(form, 'submit', event => { event.preventDefault(); const value=form.querySelector('#preview-url').value.trim(); try { const url=new URL(value); if (!['http:', 'https:'].includes(url.protocol)) throw new Error(); state.previewUrl=url.href; state.customPreview=true; localStorage.setItem('codeplus-preview-url',state.previewUrl); app(true); } catch { form.querySelector('#preview-url').setCustomValidity('Enter a valid http:// or https:// URL.'); form.querySelector('#preview-url').reportValidity(); form.querySelector('#preview-url').setCustomValidity(''); } }));
+  listen(document.querySelector('#projects-add'), 'click', () => { state.workspacesOpen=true; app(); });
+  document.querySelectorAll('#preview-form').forEach(form => listen(form, 'submit', event => { event.preventDefault(); const value=form.querySelector('#preview-url').value.trim(); try { const url=new URL(value); if (!['http:', 'https:'].includes(url.protocol)) throw new Error(); state.previewUrl=url.href; state.customPreview=true; localStorage.setItem(projectValueKey('preview-url'),state.previewUrl); localStorage.setItem(projectValueKey('custom-preview'),'true'); app(true); } catch { form.querySelector('#preview-url').setCustomValidity('Enter a valid http:// or https:// URL.'); form.querySelector('#preview-url').reportValidity(); form.querySelector('#preview-url').setCustomValidity(''); } }));
   document.querySelectorAll('#open-preview').forEach(button => listen(button, 'click', async () => { try { await openExternalUrl(document.querySelector('#preview-url').value.trim()); } catch (error) { state.vscodeNote=error.message || 'Enter a valid preview URL first.'; app(); } }));
   listen(document.querySelector('#dev-server-btn'), 'click', toggleDevServer);
   listen(document.querySelector('#preview-start-dev'), 'click', toggleDevServer);

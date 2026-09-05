@@ -1,5 +1,11 @@
 # CodePlus
 
+### v0.1.23 — Multi-project sidebar and separate project chats
+
+ဘယ်ဘက် **Explorer** ကို **Projects** ဟု ပြောင်းထားပြီး၊ header ရှိ `Workspaces / project name` ကိုဖယ်ရှားထားပါသည်။ **Projects** ဘေးရှိ `+` မှ ရှိပြီးသား folder ကို open/upload လုပ်နိုင်သလို starter project အသစ်လည်းဖန်တီးနိုင်ပါသည်။
+
+ဖွင့်ထားသော project folder အဟောင်းများကို project အသစ်ဖွင့်တိုင်းမဖယ်ရှားဘဲ Projects list ထဲတွင်ဆက်ထားပြီး တစ်ချက်နှိပ်ကာပြောင်းနိုင်ပါသည်။ Project တစ်ခုချင်းစီ၏ active file, preview URL, browser-memory files နှင့် chat history ကို သီးခြားသိမ်းထားသောကြောင့် project ပြောင်းသော်လည်း အခြား project ၏ chat နှင့် editor state မရောပါ။ Unsaved file ရှိလျှင် မပျောက်စေရန် project switch ကိုတားပြီး save လုပ်ရန်အသိပေးပါသည်။ Web, macOS နှင့် Windows desktop UI အားလုံးတွင် တူညီသော behavior ကိုအသုံးပြုပါသည်။
+
 ### v0.1.22 — Fresh file access and measured UI checks
 
 Web and desktop agents now read current disk contents instead of the editor cache. Unsaved editor drafts, files changed since the agent read them, and ambiguous string replacements are protected. No-op writes no longer count as successful changes.
@@ -70,7 +76,7 @@ CodePlus သည် **local-first AI coding workspace** တစ်ခုဖြစ�
 
 ### 1. Project အသစ်စတင်ခြင်း သို့မဟုတ် ရှိပြီးသား project ထည့်ခြင်း
 
-Header ရှိ **Workspaces** ကိုနှိပ်ပါ။ ထို့နောက် project အသစ်အတွက် folder ဖန်တီးနိုင်သလို၊ ရှိပြီးသား project folder ကိုလည်း import လုပ်နိုင်ပါသည်။ Project ဖွင့်ပြီးနောက် ဘယ်ဘက် Explorer မှာ file ကိုရွေး၊ အလယ် Editor မှာ ပြင်၊ ညာဘက် Preview မှာ result ကို စစ်ဆေးပါ။
+ဘယ်ဘက် **Projects** ဘေးရှိ `+` ကိုနှိပ်ပါ။ ထို့နောက် project အသစ်အတွက် folder ဖန်တီးနိုင်သလို၊ ရှိပြီးသား project folder ကိုလည်း open/upload လုပ်နိုင်ပါသည်။ Project အဟောင်းများကို Projects list ထဲတွင်ဆက်ထားပြီး project folder တစ်ခုချင်းစီကိုနှိပ်ကာ ပြောင်းနိုင်ပါသည်။ Active project အောက်မှ file ကိုရွေး၊ အလယ် Editor မှာ ပြင်၊ ညာဘက် Preview မှာ result ကို စစ်ဆေးပါ။ Chat history သည် project တစ်ခုချင်းစီအလိုက် သီးခြားဖြစ်ပါသည်။
 
 ![CodePlus workspace — file explorer, page.tsx editor, live preview နှင့် Coding Agent](public/assets/codeplus-workspace.png)
 
@@ -96,7 +102,7 @@ Key ကို source repository ထဲသို့ commit မလုပ်ပါ�
 
 ### 4. နေ့စဉ်အသုံးပြုမှု
 
-1. Explorer မှ file/folder ကိုဖွင့်၊ ပိတ်၊ show/hide လုပ်ပါ။
+1. Projects list မှ project ကိုရွေးပြီး active project အောက်ရှိ file/folder ကိုဖွင့်၊ ပိတ်၊ show/hide လုပ်ပါ။
 2. Editor ထဲတွင် code ပြင်ပြီး syntax highlighting နှင့် format action ကိုသုံးပါ။
 3. Preview URL ကိုပြင်ပြီး **Enter** ဖြင့် load/reload လုပ်ပါ၊ သို့မဟုတ် external browser မှာ ဖွင့်ပါ။
 4. Coding Agent ကို ပြင်စေချင်သည့်အလုပ်ကို prompt ရိုက်ပါ။ Agent က workspace ကိုစစ်ပြီး လိုအပ်သည့် file များကို read/edit/write လုပ်ကာ check command များကို run ပေးပါမည်။ `ဟလို` ကဲ့သို့ normal chat ကိုပို့လျှင် file tools မသုံးဘဲ တိုက်ရိုက်ပြန်ဖြေပါသည်။ **Enter** သို့မဟုတ် up-arrow button ဖြင့် send လုပ်ပြီး **Shift+Enter** ဖြင့် စာကြောင်းအသစ်ထည့်ပါ။ Agent အလုပ်လုပ်နေချိန် square **Stop** button ဖြင့် ရပ်နိုင်ပါသည်။
@@ -109,7 +115,7 @@ Key ကို source repository ထဲသို့ commit မလုပ်ပါ�
 - Ollama model များကို browse, တစ်ပြိုင်တည်း download, select နှင့် delete လုပ်နိုင်ခြင်း
 - File tree, editable code tabs, syntax highlighting, code formatting နှင့် live preview သုံးနိုင်ခြင်း
 - Prompt တစ်ခုဖြင့် workspace ကိုစစ်ဆေး၊ code file များကိုတိုက်ရိုက်ပြင်၊ file အသစ်ရေးပြီး test/build command များ run နိုင်သည့် multi-step Coding Agent
-- New workspace ဖန်တီးခြင်း၊ ရှိပြီးသား project import လုပ်ခြင်းနှင့် project JSON export လုပ်ခြင်း
+- Project အဟောင်းများမပျောက်ဘဲ project အသစ်ဖန်တီးခြင်း၊ ရှိပြီးသား project open/upload လုပ်ခြင်း၊ project တစ်ခုချင်းစီအလိုက် chat သိမ်းခြင်းနှင့် project JSON export လုပ်ခြင်း
 - CodePlus ထဲက VS Code web workspace ကို ဖွင့်ပြီး လက်ရှိ folder ပေါ်မှာ ဆက်လုပ်နိုင်ခြင်း
 - Browser version မှ macOS/Windows installer ကို Download menu ဖြင့် ရယူနိုင်ခြင်း
 
@@ -133,9 +139,9 @@ npm run dev
 - **macOS / Windows desktop app** — Tauri 2 ဖြင့် build ထုတ်ထားသော native app ဖြစ်ပါသည်။
 - **Local models** — Ollama ထဲတွင် install လုပ်ထားသော model များကို အလိုအလျောက် ရှာဖွေ၊ ရွေးချယ်၊ download နှင့် delete လုပ်နိုင်ပါသည်။ Catalog တွင် Qwen3 Coder, GPT-OSS, Llama, Gemma 3, Phi-4, DeepSeek R1, Mistral, GLM 4 စသဖြင့် Ollama library ကို ကျယ်ကျယ်ပြန့်ပြန့် ပါဝင်ပါသည်။
 - **Cloud providers** — OpenAI/Codex, Anthropic Claude, Google Gemini, Groq, DeepSeek, Mistral AI, xAI Grok, OpenRouter, Together AI, Fireworks AI, Cerebras (OpenAI-compatible API) တို့ကို key ဖြင့် ရွေးသုံးနိုင်ပါသည်။
-- **Editor** — syntax highlighting, line numbers, file tab ပိတ်ခြင်း၊ Explorer show/hide နှင့် code format action ပါဝင်ပါသည်။
+- **Editor** — syntax highlighting, line numbers, file tab ပိတ်ခြင်း၊ Projects sidebar show/hide နှင့် code format action ပါဝင်ပါသည်။
 - **Preview** — URL ကို ပြင်ပြီး Enter နှိပ်ကာ reload လုပ်နိုင်သည်၊ browser အသစ်တွင်ဖွင့်နိုင်သည်၊ preview ကို hide/show လုပ်နိုင်သည်။
-- **Workspace management** — project အသစ်စနိုင်သည်၊ ရှိပြီးသား project folder ကို import လုပ်နိုင်သည်၊ project JSON export လုပ်နိုင်သည်။
+- **Project management** — Projects `+` မှ project အသစ်စနိုင်သည်၊ ရှိပြီးသား project folder ကို open/upload လုပ်နိုင်သည်၊ project အဟောင်းများကို list ထဲတွင်ဆက်ထားနိုင်ပြီး project JSON export လုပ်နိုင်သည်။ Chat history ကို project အလိုက်သီးခြားသိမ်းပါသည်။
 - **Embedded VS Code** — CodePlus ထဲက `VS Code workspace` ခလုတ်ဖြင့် လက်ရှိ project folder ကို local VS Code web workspace အဖြစ် ဖွင့်နိုင်ပါသည်။
 
 ## လိုအပ်ချက်များ
@@ -314,23 +320,24 @@ Server ကို restart လုပ်ပြီး provider settings မှ **Goo
 
 ## CodePlus UI အသုံးပြုနည်း
 
-### Workspaces နှင့် project များ
+### Projects နှင့် project folder များ
 
-အပေါ်ဘက်ရှိ **Workspaces** ကိုနှိပ်လျှင် (opencode စတာိုး disk တွင်တိုက်ရိုက် အလုပ်လုပ်သည်):
+ဘယ်ဘက် **Projects** ဘေးရှိ `+` ကိုနှိပ်လျှင် (opencode စတိုင် disk တွင်တိုက်ရိုက် အလုပ်လုပ်သည်):
 
 - **Open project folder…** — စက်ထဲမှ folder တစ်ခုကို ရွေးပြီး **upload မလုပ်ဘဲ** တိုက်ရိုက် open လုပ်ပါသည်။ File content များကို click နှိပ်တဲ့အခါမှ load လုပ်သဖြင့် project ကြီးများလည်း အမြန်ဖွင့်နိုင်ပါသည်။ `node_modules`, `.git`, `dist`, `target` ကဲ့သို့ folder များကို အလိုအလျောက် ချန်ထားပါသည်။
 - **New project** — project အမည်ထည့်ပြီး parent folder ရွေးလျှင် starter file များကို disk ပေါ်တွင် တိုက်ရိုက် ဖန်တီးပါသည်။
+- Project အသစ်ဖန်တီး/open လုပ်သော်လည်း အရင် project folder များကို Projects list မှမဖယ်ရှားပါ။ Project name ကိုနှိပ်၍ files, active editor state နှင့် သက်ဆိုင်ရာ chat history ကိုပြန်ဖွင့်နိုင်ပါသည်။
 - Edit ပြီးလျှင် `⌘S`/`Ctrl+S` ဖြင့် disk သို့ save လုပ်ပါသည်။
-- Browser သည် disk access မပါလျှင် (Firefox/Safari) import a copy fallback ကို အသုံးပြုပါသည်။
+- Browser သည် disk access မပါလျှင် (Firefox/Safari) upload a copy fallback ကို အသုံးပြုပါသည်။
 
-Browser mode တွင် file များကို browser session အတွင်း ထိန်းထားနိုင်သဖြင့် အရေးကြီးသောအလုပ်ကို မကြာခဏ export/backup လုပ်ပါ။ Import လုပ်ရာတွင် folder ရွေးချယ်နိုင်သော browser ကို အသုံးပြုပါ။
+Browser copy mode တွင် project files နှင့် chats ကို IndexedDB အတွင်း project အလိုက်သိမ်းထားပါသည်။ အရေးကြီးသောအလုပ်ကို Git သို့မဟုတ် export ဖြင့် မကြာခဏ backup လုပ်ပါ။ Upload လုပ်ရာတွင် folder ရွေးချယ်နိုင်သော browser ကို အသုံးပြုပါ။
 
-### Explorer နှင့် editor
+### Projects sidebar နှင့် editor
 
 - Folder ၏ chevron ကိုနှိပ်၍ expand/collapse လုပ်ပါ။
 - File ကိုနှိပ်၍ editor tab တွင်ဖွင့်ပါ။
 - Tab ရှိ `×` ကိုနှိပ်၍ ဖိုင်ပိတ်ပါ။ Editor ဖိုင်ပိတ်ထားလျှင် preview pane က အကျယ်ပိုရပါမည်။
-- Editor toolbar ရှိ layout ခလုတ်မှ Explorer ကို show/hide လုပ်နိုင်ပါသည်။ Hide လုပ်ထားလျှင် editor နှင့် preview က ပိုကျယ်လာပါမည်။
+- Editor toolbar ရှိ layout ခလုတ်မှ Projects sidebar ကို show/hide လုပ်နိုင်ပါသည်။ Hide လုပ်ထားလျှင် editor နှင့် preview က ပိုကျယ်လာပါမည်။
 - Code အရောင်များသည် TypeScript/TSX/CSS အလိုက် syntax highlighting ဖြစ်ပါသည်။
 - **Format** action သည် CodePlus ပါ safe basic formatter ဖြစ်ပါသည်။ Prettier အပြည့်အစုံ မဟုတ်သောကြောင့် ရှုပ်ထွေးသော code ကို format မလုပ်မီ version control သို့မဟုတ် export ဖြင့် backup လုပ်ရန် အကြံပြုပါသည်။
 
@@ -338,7 +345,7 @@ Browser mode တွင် file များကို browser session အတွ�
 
 Preview address bar တွင် URL ကိုရိုက်ထည့်ပြီး **Enter** သို့မဟုတ် reload icon ကိုနှိပ်၍ ပြောင်းနိုင်ပါသည်။ External/open icon သည် preview URL ကို browser tab အသစ်တွင်ဖွင့်ပါသည်။ Layout icon က preview ကို hide/show လုပ်နိုင်ပါသည်။
 
-Web၊ macOS နှင့် Windows တွင် editor၊ preview၊ chat ကို သီးခြား update လုပ်ပါသည်။ Explorer မှ file ရွေးခြင်း၊ settings ဖွင့်ခြင်း၊ chat reply ရောက်ခြင်းကြောင့် preview reload မဖြစ်ပါ။ Editor ၏ unsaved text၊ cursor/scroll နှင့် မပို့ရသေးသော prompt ကို ထိန်းထားပါသည်။ Chat အဟောင်းကို scroll တက်ဖတ်နေချိန် အလိုအလျောက်အောက်ပြန်မဆင်းပါ။ အောက်ဆုံးတွင်ရှိနေပါက reply အသစ်ကို ဆက်ပြပါသည်။ Preview URL ပြောင်းခြင်း၊ reload နှိပ်ခြင်း၊ dev server စတင်ခြင်း သို့မဟုတ် preview app ကိုယ်တိုင်၏ hot reload သည် ပုံမှန်အတိုင်း အလုပ်လုပ်ပါသည်။
+Web၊ macOS နှင့် Windows တွင် editor၊ preview၊ chat ကို သီးခြား update လုပ်ပါသည်။ Projects sidebar မှ file ရွေးခြင်း၊ settings ဖွင့်ခြင်း၊ chat reply ရောက်ခြင်းကြောင့် preview reload မဖြစ်ပါ။ Editor ၏ unsaved text၊ cursor/scroll နှင့် မပို့ရသေးသော prompt ကို ထိန်းထားပါသည်။ Chat အဟောင်းကို scroll တက်ဖတ်နေချိန် အလိုအလျောက်အောက်ပြန်မဆင်းပါ။ အောက်ဆုံးတွင်ရှိနေပါက reply အသစ်ကို ဆက်ပြပါသည်။ Preview URL ပြောင်းခြင်း၊ reload နှိပ်ခြင်း၊ dev server စတင်ခြင်း သို့မဟုတ် preview app ကိုယ်တိုင်၏ hot reload သည် ပုံမှန်အတိုင်း အလုပ်လုပ်ပါသည်။
 
 အချို့ third-party website များသည် iframe အတွင်းဖွင့်ခွင့်ကိုပိတ်ထားသောကြောင့် preview တွင် blank/refused-to-connect ပေါ်နိုင်သည်။ ထိုအခါ external/open icon ကိုသုံးပါ။ `localhost:3000 refused to connect` ဆိုလျှင် preview ပြလိုသော app server ကို port 3000 တွင် မစတင်ရသေးခြင်း ဖြစ်နိုင်ပါသည်။
 
@@ -346,7 +353,7 @@ Web၊ macOS နှင့် Windows တွင် editor၊ preview၊ chat က�
 
 - AI panel မှ prompt ရိုက်ပြီး **Enter** သို့မဟုတ် up-arrow button နှိပ်ပါက send လုပ်ပါသည်။ Run နေချိန် button သည် square **Stop** အဖြစ်ပြောင်းပြီး model/tool step များကို ရပ်နိုင်ပါသည်။
 - စာကြောင်းအသစ်ရေးလိုလျှင် **Shift + Enter** ကိုသုံးပါ။
-- Chat history ကို workspace တစ်ခုချင်းစီအလိုက် စက်အတွင်း IndexedDB တွင်သိမ်းထားသောကြောင့် page reload သို့မဟုတ် app ပြန်ဖွင့်လည်း old messages မပျောက်ပါ။
+- Chat history ကို project တစ်ခုချင်းစီအလိုက် စက်အတွင်း IndexedDB တွင်သိမ်းထားသောကြောင့် project ပြောင်းခြင်း၊ page reload သို့မဟုတ် app ပြန်ဖွင့်ခြင်းကြောင့် old messages မပျောက်သလို project မတူသည့် chat များလည်း မရောပါ။
 - User/assistant message ပေါ်သို့ mouse တင်လျှင် **Copy** action ပေါ်ပါသည်။ User message တွင် **Edit** ကိုနှိပ်လျှင် အရင်စာကို composer ထဲပြန်ထည့်ပေးပြီး edited follow-up အဖြစ်ပို့နိုင်သည်။ Original message ကို history ထဲတွင်ဆက်ထားပါသည်။
 - Composer ရှိ `+` → **Files** ကိုနှိပ်လျှင် intermediate modal မပြဘဲ macOS/Windows/browser ၏ My Computer file picker တန်းဖွင့်ပါသည်။
 - Chat history များလာသော်လည်း composer နှင့် Send/Stop button သည် panel အောက်ခြေတွင် ဆက်ရှိပါသည်။
