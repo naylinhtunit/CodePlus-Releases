@@ -1,0 +1,114 @@
+name: Build public desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        type: string
+      source_ref:
+        description: Private CodePlus branch, tag, or commit to build
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-14
+            args: --target aarch64-apple-darwin --bundles dmg
+            artifact: CodePlus-macos-arm64
+          - name: macOS Intel
+            os: macos-15-intel
+            args: --target x86_64-apple-darwin --bundles dmg
+            artifact: CodePlus-macos-x64
+          - name: Windows x64
+            os: windows-latest
+            args: --bundles msi,nsis
+            artifact: CodePlus-windows-x64
+    steps:
+      - name: Check out private CodePlus source read-only
+        uses: actions/checkout@v7
+        with:
+          repository: naylinhtunit/CodePlus
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.CODEPLUS_SOURCE_SSH_KEY }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: source/src-tauri
+      - name: Validate source version
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          test "$package_version" = "${{ inputs.version }}"
+      - run: npm ci
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - name: Build installer-only bundles
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const fs=require('node:fs'); const p='src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.createUpdaterArtifacts=false; fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
+          npm run desktop:build -- ${{ matrix.args }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: source/src-tauri/target/**/release/bundle/**
+          if-no-files-found: error
+
+  release:
+    name: Publish installers in CodePlus-Releases
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: Prepare stable filenames
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          mac_arm="$(find artifacts/CodePlus-macos-arm64 -type f -name '*.dmg' -print -quit)"
+          mac_x64="$(find artifacts/CodePlus-macos-x64 -type f -name '*.dmg' -print -quit)"
+          win_exe="$(find artifacts/CodePlus-windows-x64 -type f -name '*-setup.exe' -print -quit)"
+          test -n "$mac_arm" && test -n "$mac_x64" && test -n "$win_exe"
+          cp "$mac_arm" release-assets/CodePlus-macOS-arm64.dmg
+          cp "$mac_x64" release-assets/CodePlus-macOS-x64.dmg
+          cp "$win_exe" release-assets/CodePlus-windows-x64-setup.exe
+          win_msi="$(find artifacts/CodePlus-windows-x64 -type f -name '*.msi' -print -quit)"
+          if [ -n "$win_msi" ]; then cp "$win_msi" release-assets/CodePlus-windows-x64.msi; fi
+      - name: Create or update public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${{ inputs.version }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "CodePlus $tag" --notes "Desktop installers for CodePlus $tag."
+          fi
