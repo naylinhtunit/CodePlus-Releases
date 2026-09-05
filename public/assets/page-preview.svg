@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="360" viewBox="0 0 560 360" role="img" aria-labelledby="title desc">
+<title id="title">CodePlus Preview — page.tsx</title>
+<desc id="desc">Live preview of src/app/page.tsx at localhost:3000</desc>
+<rect width="560" height="360" rx="16" fill="#ffffff"/>
+<rect x="1" y="1" width="558" height="358" rx="15" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<g font-family="Manrope, system-ui, sans-serif">
+  <text x="36" y="48" font-size="10" font-weight="800" letter-spacing="1.8" fill="#8b9cff">CODEPLUS</text>
+  <text x="36" y="92" font-size="28" font-weight="800" letter-spacing="-1.2" fill="#0f172a">Build faster with</text>
+  <text x="36" y="124" font-size="28" font-weight="800" letter-spacing="-1.2" fill="#0f172a">your own AI stack.</text>
+  <text x="36" y="158" font-size="13" fill="#64748b">One focused workspace for browser and desktop.</text>
+  <g transform="translate(36,180)">
+    <rect width="118" height="36" rx="8" fill="#4f46e5"/>
+    <text x="59" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="white">Start building</text>
+  </g>
+  <g transform="translate(164,180)">
+    <rect width="96" height="36" rx="8" fill="#eef2ff" stroke="#e0e7ff"/>
+    <text x="48" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#4338ca">View docs</text>
+  </g>
+  <rect x="36" y="240" width="488" height="1" fill="#f1f5f9"/>
+  <text x="36" y="262" font-size="10" font-weight="600" letter-spacing="0.6" fill="#94a3b8">PREVIEW · http://localhost:3000</text>
+  <text x="36" y="282" font-size="11" fill="#64748b">Updates live as you edit src/app/page.tsx</text>
+</g>
+</svg>

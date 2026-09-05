@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.desktop-dist/
+.env
+src-tauri/target/
+src-tauri/gen/
+.codeplus/
+.DS_Store
+downloads/CodePlus-macOS-*.dmg
+downloads/CodePlus-windows-*.exe
+downloads/CodePlus-windows-*.msi
+public/downloads/CodePlus-macOS-*.dmg
+public/downloads/CodePlus-windows-*.exe
+public/downloads/CodePlus-windows-*.msi
