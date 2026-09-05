@@ -272,6 +272,16 @@ function appendMessage(message) {
   persistChatHistory();
   return item;
 }
+function agentCompletionMessage(audit) {
+  const editedFiles = [...(audit?.changed || [])].sort((left, right) => left.localeCompare(right));
+  return {
+    role: 'assistant',
+    mode: 'agent',
+    completion: true,
+    content: editedFiles.length ? 'Changes completed.' : 'Completed. No files changed.',
+    editedFiles
+  };
+}
 const PROJECTS_KEY = 'codeplus-projects-v1';
 const ACTIVE_PROJECT_KEY = 'codeplus-active-project';
 function newProjectId(kind='memory') { return `${kind}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2,9)}`; }
@@ -382,8 +392,10 @@ function preview() {
 }
 function messages() {
   const callsById = new Map();
+  const finishedCalls = new Set();
   for (const message of state.messages) {
     for (const call of message.tool_calls || []) callsById.set(call.id, call);
+    if (message.role === 'tool' && message.tool_call_id) finishedCalls.add(message.tool_call_id);
   }
   return state.messages.map(m => {
     if (m.role === 'tool') {
@@ -403,15 +415,25 @@ function messages() {
       const summary = tc.name === 'read' ? args.filePath : tc.name === 'write' ? args.filePath : tc.name === 'edit' ? `${args.filePath}` : tc.name === 'bash' ? args.command : tc.name === 'glob' ? args.pattern : tc.name === 'grep' ? args.pattern : JSON.stringify(args).slice(0,120);
       return `<div class="tool-call"><span class="tool-name">${escape(tc.name)}</span><span class="tool-args">${escape(String(summary||'').slice(0,160))}</span></div>`;
     }).join('');
-    if (m.role === 'assistant' && m.tool_calls?.length && !m.content?.trim()) return '';
+    if (m.role === 'assistant' && m.tool_calls?.length && !m.content?.trim()) {
+      const labels = { read:'Reading', write:'Writing', edit:'Editing', bash:'Running', glob:'Listing', grep:'Searching', inspect_preview:'Inspecting preview', todowrite:'Updating tasks' };
+      return m.tool_calls.filter(call => !finishedCalls.has(call.id)).map(call => {
+        const args = call.arguments || {};
+        const target = call.name === 'bash' ? args.command : call.name === 'glob' ? args.pattern : call.name === 'grep' ? `${args.pattern || ''}${args.include ? ` · ${args.include}` : ''}` : args.filePath || '';
+        return `<div class="message tool running" data-message-id="${escape(m.id)}:${escape(call.id)}"><div class="tool-running-row"><span class="tool-spinner" aria-hidden="true"></span><span class="tool-label">${escape(labels[call.name] || call.name || 'Working')}</span>${target ? `<code title="${escapeAttr(target)}">${escape(String(target).slice(0,160))}</code>` : ''}<span class="tool-status">Working</span></div></div>`;
+      }).join('');
+    }
     const body = m.content ? `<div class="msg-body">${escape(m.content)}</div>` : '';
+    const editedFiles = m.completion && Array.isArray(m.editedFiles) && m.editedFiles.length
+      ? `<div class="completion-files">${m.editedFiles.map(path => `<button type="button" data-open-edited-file="${escapeAttr(path)}" title="Open ${escapeAttr(path)}"><span>✓</span><code>${escape(path)}</code></button>`).join('')}</div>`
+      : '';
     const images = (m.images || []).map(img => `<div class="msg-image"><img src="${escape(img.image_url?.url || '')}" alt="uploaded image" /></div>`).join('');
     const copied = state.copiedMessageId === m.id;
     const copyAction = m.content ? `<button type="button" data-copy-message="${escape(m.id)}" title="Copy message" aria-label="Copy message">${copied ? '<span class="action-check">✓</span>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>'}</button>` : '';
     const editAction = m.role==='user' && m.content ? `<button type="button" data-edit-message="${escape(m.id)}" title="Edit and resend" aria-label="Edit message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6a2 2 0 0 0-2.8-2.8L5.4 16.2 4 20Z"/><path d="m14.5 7.1 2.8 2.8"/></svg></button>` : '';
     const actions = copyAction || editAction ? `<div class="message-actions">${copyAction}${editAction}</div>` : '';
     const editedNote = m.editedFrom ? '<span class="edited-note">Edited copy</span>' : '';
-    return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${images}${m.content?.trim() ? toolCalls : ''}</div>`;
+    return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.completion ? 'completion' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${editedFiles}${images}${m.content?.trim() ? toolCalls : ''}</div>`;
   }).join('') + (state.todos.length ? `<div class="message todos"><span class="role">Todos</span>${state.todos.map(t=>`<div class="todo ${t.status}"><span>${t.status==='completed'?'✓':t.status==='in_progress'?'◉':'○'} ${escape(t.content)}</span><span class="prio">${escape(t.priority||'')}</span></div>`).join('')}</div>` : '');
 }
 function compactModelName(id, name = '', max = 38) {
@@ -1782,6 +1804,17 @@ function bind() {
   listen(document.querySelector('#stop'), 'click', stopResponse);
   document.querySelectorAll('[data-copy-message]').forEach(button => listen(button, 'click', () => copyChatMessage(button.dataset.copyMessage)));
   document.querySelectorAll('[data-edit-message]').forEach(button => listen(button, 'click', () => editChatMessage(button.dataset.editMessage)));
+  document.querySelectorAll('[data-open-edited-file]').forEach(button => listen(button, 'click', () => {
+    const file = button.dataset.openEditedFile;
+    if (!file) return;
+    state.active = file;
+    state.editorClosed = false;
+    state.dirty = state.dirtyFiles.has(file);
+    for (const folder of file.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))) state.folders[folder] = true;
+    localStorage.setItem(projectValueKey('active-file'), file);
+    app();
+    if (fsMode() !== 'memory') ensureLoaded(file);
+  }));
   listen(document.querySelector('#cancel-message-edit'), 'click', cancelMessageEdit);
   listen(document.querySelector('#prompt'), 'keydown', event => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -2188,7 +2221,7 @@ async function sendPrompt(event) {
           break;
         }
       }
-      appendMessage({ role:'assistant', mode: turnMode, content: result.content });
+      appendMessage(toolsEnabled ? agentCompletionMessage(toolAudit) : { role:'assistant', mode: turnMode, content: result.content });
       completed = true;
       break;
     }

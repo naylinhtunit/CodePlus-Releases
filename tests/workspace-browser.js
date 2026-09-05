@@ -1,6 +1,8 @@
 import { state, app } from '/app.js';
 
 Object.assign(state, { customPreview: true, previewUrl: `${location.origin}/frame`, localModelsLoaded: true, files: { 'a.ts': 'const a = 1;\n'.repeat(150), 'b.css': 'body { color: red; }', 'page.tsx': '<main>Test</main>' }, active: 'a.ts', model: 'test-model', messages: Array.from({ length: 35 }, (_, i) => ({ id: `test-${i}`, role: i % 2 ? 'assistant' : 'user', content: `Test message ${i}. `.repeat(20) })) });
+Object.assign(state, { dirHandle: null, dirPath: '', treePaths: [], activeProjectId: 'memory:regression', projectName: 'Regression', projects: [{ id: 'memory:regression', kind: 'memory', name: 'Regression' }] });
+state.expandedProjects['memory:regression'] = true;
 app();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const check = (condition, message) => { if (!condition) throw new Error(message); };
@@ -84,10 +86,23 @@ async function run() {
     check(coding.requireTool === true, 'Explicit coding request did not require an initial tool');
     window.fetch = originalFetch;
     results.push('Prompt routing: greetings use one tool-free request; coding requests enable tools');
+
+    state.messages.push({ id: 'progress-call', role: 'assistant', content: '', tool_calls: [{ id: 'progress-edit', name: 'edit', arguments: { filePath: 'b.css' } }] });
+    app(); await pause(20);
+    check(/Editing.*b\.css.*Working/.test(document.querySelector('.tool-running-row')?.textContent || ''), 'Live tool progress is not visible');
+    state.messages.push({ id: 'progress-result', role: 'tool', name: 'edit', tool_call_id: 'progress-edit', content: 'Wrote b.css' });
+    state.messages.push({ id: 'progress-complete', role: 'assistant', mode: 'agent', completion: true, content: 'Changes completed.', editedFiles: ['b.css'] });
+    app(); await pause(20);
+    check(!document.querySelector('.tool-running-row'), 'Finished tool still appears as running');
+    const editedFile = document.querySelector('[data-open-edited-file="b.css"]');
+    check(editedFile && /Changes completed\./.test(document.querySelector('[data-message-id="progress-complete"]')?.textContent || ''), 'Concise completion or edited file is missing');
+    editedFile.click(); await pause(20);
+    check(state.active === 'b.css' && document.querySelector('#code').value === state.files['b.css'], 'Edited file result did not open in editor');
+    results.push('Agent progress: live Working state, compact completion and edited-file open verified');
     document.querySelector('#test-results').textContent = 'PASS\n' + results.join('\n');
     window.webkit?.messageHandlers?.results?.postMessage({ ok: true, results });
   } catch (error) {
-    document.querySelector('#test-results').textContent = `FAIL: ${error.message}\n${results.join('\n')}`;
+    document.querySelector('#test-results').textContent = `FAIL: ${error.message}\n${error.stack || ''}\n${results.join('\n')}`;
     window.webkit?.messageHandlers?.results?.postMessage({ ok: false, error: error.message, results });
   }
 }

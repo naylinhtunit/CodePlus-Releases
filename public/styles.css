@@ -164,11 +164,13 @@ button,input,select,textarea { font:inherit; }
 .message.tool .tool-status { margin-left:auto;color:#607087;font-size:9px; }
 .message.tool.blocked .tool-state,.message.tool.failed .tool-state { background:#3a2427;color:#ffafa6; }
 .message.tool.blocked .tool-status,.message.tool.failed .tool-status { color:#c98580; }
+.message.tool.running{overflow:hidden}.tool-running-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 9px;font:10px 'DM Mono',monospace}.tool-running-row code{min-width:0;overflow:hidden;color:#77869e;font:10px 'DM Mono',monospace;text-overflow:ellipsis;white-space:nowrap}.tool-running-row .tool-status{margin-left:auto;color:#8192af;font-size:9px}.tool-spinner{width:14px;height:14px;flex:0 0 14px;border:2px solid #294659;border-top-color:#72d7b4;border-radius:50%;animation:tool-spin .8s linear infinite}@keyframes tool-spin{to{transform:rotate(360deg)}}
 .tool-output { margin:0;border:0;border-top:1px solid #202c3d;border-radius:0;color:#9ecab8;font:10px/1.55 'DM Mono',monospace;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#0b1218;padding:9px 10px; }
 .tool-call { display:flex;align-items:center;gap:8px;margin:6px 0 0;padding:6px 9px;background:#141927;border:1px solid #26304a;border-radius:7px;font:11px 'DM Mono',monospace;color:#aebbe0; }
 .tool-call .tool-name { color:#8ea4ff;font-weight:800;text-transform:lowercase; }
 .tool-call .tool-args { color:#758197;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px; }
 .msg-body { white-space:pre-wrap;word-break:break-word; }
+.message.completion{margin-top:14px;padding:10px;border:1px solid #214238;border-radius:9px;background:#101b19}.message.completion .msg-body{color:#d9f4e9;font-weight:650}.completion-files{display:grid;gap:6px;margin-top:8px}.completion-files button{display:flex;align-items:center;gap:8px;min-width:0;width:100%;padding:8px 9px;border:1px solid #23394a;border-radius:7px;background:#0c151b;color:#9fd9c5;text-align:left;cursor:pointer}.completion-files button:hover{border-color:#3b6658;background:#11201d}.completion-files button span{display:grid;place-items:center;width:16px;height:16px;flex:0 0 16px;border-radius:50%;background:#174136;color:#79dfbd;font-size:9px;font-weight:900}.completion-files button code{overflow:hidden;color:#b8c8d9;font:10px 'DM Mono',monospace;text-overflow:ellipsis;white-space:nowrap}
 .message.todos { background:#111a18;border:1px solid #1e3a2f;border-radius:8px;padding:10px; }
 .todo { display:flex;justify-content:space-between;align-items:center;padding:4px 0;font:11px 'DM Mono',monospace;color:#aebbe0;border-bottom:1px solid #1a2a24; }
 .todo:last-child{border-bottom:0}

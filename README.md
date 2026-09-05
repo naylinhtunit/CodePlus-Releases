@@ -1,5 +1,11 @@
 # CodePlus
 
+### v0.1.25 — Live agent progress and concise completion
+
+Coding Agent အလုပ်လုပ်နေစဉ် `Reading`, `Editing`, `Writing`, `Running`, `Searching` နှင့် `Inspecting preview` လုပ်ဆောင်ချက်များကို live **Working** card အဖြစ်ပြပြီး၊ ပြီးဆုံးချိန်တွင် `Done`, `Failed` သို့မဟုတ် `Blocked` status ဖြင့် အမှားနှင့်အခြေအနေကိုကြည့်နိုင်ပါသည်။
+
+အလုပ်အားလုံးအောင်မြင်ပြီးနောက် model ထုတ်သော ရှည်လျားသည့် audit/verification report ကို chat ထဲမပြတော့ပါ။ CodePlus ၏ verified change audit ကိုသုံးပြီး **Changes completed** နှင့် အမှန်တကယ်ပြင်ထားသော file များကိုသာ final result အဖြစ်ပြပါသည်။ File result ကိုနှိပ်လျှင် editor တွင် တိုက်ရိုက်ဖွင့်ပေးပြီး Web, macOS နှင့် Windows အားလုံးတွင် behavior တူညီပါသည်။
+
 ### v0.1.24 — Project tree controls and desktop file creation
 
 Projects sidebar အောက်ရှိ **Export project JSON** card တစ်ခုလုံးကို ဖယ်ရှားထားပါသည်။ Active project folder ကိုနှိပ်လျှင် file tree ကို show/hide လုပ်နိုင်ပြီး၊ project အတွင်းရှိ nested folder များကို default အနေဖြင့်ပိတ်ထားသောကြောင့် sidebar တစ်ခုလုံး အလိုအလျောက်ပြန့်မနေတော့ပါ။ Folder တစ်ခုချင်းကိုနှိပ်မှသာ ၎င်းအတွင်းရှိ folder နှင့် file များ ပွင့်ပါသည်။

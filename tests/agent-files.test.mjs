@@ -21,11 +21,21 @@ function fixture(desktop) {
     readWorkspaceText = async (_, p) => { if (!disk.has(p)) throw new Error('File not found'); return disk.get(p); };
     writeWorkspaceText = async (_, p, c) => disk.set(p, c);
     state.dirPath = '/fixture'; state.treePaths = ['page.tsx']; state.files = { 'page.tsx': 'stale cache' };
-    this.fixture = { state, executeTool, agentRead, agentEdit, agentWrite, sendPrompt };
+    this.fixture = { state, executeTool, agentRead, agentEdit, agentWrite, agentCompletionMessage, sendPrompt };
   `, sandbox);
   sandbox.disk = disk;
   return { ...sandbox.fixture, disk, sandbox };
 }
+
+test('agent completion ignores verbose model prose and returns only audited edited files', () => {
+  const f = fixture(false), audit = auditTools.createToolAudit();
+  audit.changed.add('z.css');
+  audit.changed.add('src/a.ts');
+  const message = f.agentCompletionMessage(audit);
+  assert.equal(message.content, 'Changes completed.');
+  assert.deepEqual([...message.editedFiles], ['src/a.ts', 'z.css']);
+  assert.equal(message.completion, true);
+});
 
 for (const desktop of [false, true]) {
   test(`${desktop ? 'desktop' : 'web'}: a false model success is withheld after measured mismatch and bounded repairs`, async () => {

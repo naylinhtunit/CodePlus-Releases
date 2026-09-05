@@ -176,6 +176,34 @@ test('tool activity is compact by default and raw output is available on demand'
   assert.match(activity.querySelector('.tool-output').textContent, /export default/);
 });
 
+test('active tools report what the agent is doing until their result arrives', () => {
+  const f = fixture();
+  f.state.messages.push({ id: 'active-call', role: 'assistant', content: '', tool_calls: [{ id: 'call-edit', name: 'edit', arguments: { filePath: 'src/app/globals.css' } }] });
+  f.render();
+  assert.match(f.root.querySelector('.tool-running-row').textContent, /Editing.*src\/app\/globals\.css.*Working/);
+  f.state.messages.push({ id: 'edit-result', role: 'tool', name: 'edit', tool_call_id: 'call-edit', content: 'Wrote src/app/globals.css' });
+  f.render();
+  assert.equal(f.root.querySelector('.tool-running-row'), null);
+  assert.match(f.root.querySelector('[data-message-id="edit-result"]').textContent, /Edited.*Done/);
+});
+
+test('completed agent work shows only the verified edited files and opens them in the editor', () => {
+  const f = fixture();
+  f.state.messages.push({
+    id: 'completion', role: 'assistant', mode: 'agent', completion: true,
+    content: 'Changes completed.', editedFiles: ['src/app/globals.css']
+  });
+  f.render();
+  const result = f.root.querySelector('[data-message-id="completion"]');
+  assert.ok(result.classList.contains('completion'));
+  assert.equal(result.querySelector('.msg-body').textContent, 'Changes completed.');
+  assert.equal(result.querySelectorAll('[data-open-edited-file]').length, 1);
+  assert.equal(result.textContent.includes('Verification Summary'), false);
+  result.querySelector('[data-open-edited-file]').click();
+  assert.equal(f.state.active, 'src/app/globals.css');
+  assert.equal(f.state.editorClosed, false);
+});
+
 test('late WebView animation frame cannot override a newer user scroll', () => {
   const f = fixture(), chat = f.root.querySelector('#chat');
   Object.defineProperties(chat, { scrollHeight: { value: 2000 }, clientHeight: { value: 400 } });
