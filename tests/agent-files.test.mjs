@@ -103,7 +103,10 @@ for (const desktop of [false, true]) {
     const f = fixture(desktop), audit = auditTools.createToolAudit();
     audit.explored = true;
     f.disk.set('new.ts', 'external');
-    assert.match(await f.executeTool('write', { filePath: 'new.ts', content: 'agent' }, audit), /before overwriting/);
+    assert.match(await f.executeTool('write', { filePath: 'new.ts', content: 'agent' }, audit), /automatically loaded new\.ts/);
     assert.equal(f.disk.get('new.ts'), 'external');
+    assert.equal(audit.inspected.has('new.ts'), true);
+    assert.match(await f.executeTool('write', { filePath: 'new.ts', content: 'agent' }, audit), /Wrote new\.ts/);
+    assert.equal(f.disk.get('new.ts'), 'agent');
   });
 }

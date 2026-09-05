@@ -103,6 +103,14 @@ export function guardToolCall(audit, name, args = {}, existingPaths = []) {
   return '';
 }
 
+export function mutationReadPrerequisite(audit, name, args = {}, existingPaths = []) {
+  if (!audit) return '';
+  const path = cleanPath(args.filePath);
+  if (!path || audit.inspected.has(path)) return '';
+  const exists = new Set(existingPaths.map(cleanPath)).has(path);
+  return name === 'edit' || (name === 'write' && exists) ? path : '';
+}
+
 export function recordToolResult(audit, name, args = {}) {
   if (!audit) return;
   const path = cleanPath(args.filePath);

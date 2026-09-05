@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 use wait_timeout::ChildExt;
@@ -71,6 +71,8 @@ async fn install_app_update(app: tauri::AppHandle) -> Result<(), String> {
     }
   ).await.map_err(|error| error.to_string())?;
   let _ = app.emit("app-update-progress", json!({ "stage": "restarting" }));
+  #[cfg(target_os = "macos")]
+  tokio::time::sleep(Duration::from_millis(750)).await;
   app.restart();
 }
 
@@ -889,6 +891,22 @@ fn parse_ollama_reply(data: &Value) -> Result<Option<AskResponse>, String> {
   Ok(None) // Never execute reasoning text or present it as a final answer.
 }
 
+const OLLAMA_TOOL_RECOVERY_PROMPT: &str = "Your previous tool call was malformed and was not executed. Retry exactly one tool using <tool_call>{\"name\":\"read\",\"arguments\":{\"filePath\":\"path/from/project\"}}</tool_call>. Use valid JSON, escape newlines inside string values, and include no prose.";
+
+fn is_ollama_tool_protocol_error(value: &str) -> bool {
+  let text = value.to_ascii_lowercase();
+  text.contains("unexpected end of json") || (text.contains("tool") && ["parsing", "parse", "invalid", "malformed", "json", "arguments"].iter().any(|part| text.contains(part)))
+}
+
+fn has_malformed_tool_intent(content: &str) -> bool {
+  (content.to_ascii_lowercase().contains("<tool_call>") || content.contains("{\"name\"")) && parse_tool_calls_fallback(content).is_none()
+}
+
+fn prepare_ollama_tool_recovery(body: &mut Value) {
+  body.as_object_mut().unwrap().remove("tools");
+  body["messages"].as_array_mut().unwrap().push(json!({"role":"user","content":OLLAMA_TOOL_RECOVERY_PROMPT}));
+}
+
 fn network_error(error: reqwest::Error) -> String {
   format!("Model connection failed: {}. Check your network, proxy and provider settings.", error.without_url())
 }
@@ -915,6 +933,7 @@ async fn ask_model(request: ChatRequest) -> Result<AskResponse, String> {
     let endpoint = request.local_url.unwrap_or_else(|| "http://127.0.0.1:11434".into());
     let mut body = ollama_body(&model, &messages, tools_enabled);
     let mut empty_retries = 0;
+    let mut tool_recovery_retries = 0;
     loop {
       let response = client.post(format!("{}/api/chat", endpoint.trim_end_matches('/')))
         .json(&body).send().await.map_err(network_error)?;
@@ -925,9 +944,31 @@ async fn ask_model(request: ChatRequest) -> Result<AskResponse, String> {
         if body.get("tools").is_some() && error.to_ascii_lowercase().contains("not support tools") {
           body.as_object_mut().unwrap().remove("tools"); continue;
         }
+        if tools_enabled && tool_recovery_retries < 1 && is_ollama_tool_protocol_error(error) {
+          tool_recovery_retries += 1;
+          prepare_ollama_tool_recovery(&mut body);
+          continue;
+        }
         return Err(format!("Ollama HTTP {status}: {error}"));
       }
-      if let Some(result) = parse_ollama_reply(&data)? { return Ok(result); }
+      match parse_ollama_reply(&data) {
+        Ok(Some(result)) => {
+          if tools_enabled && result.tool_calls.is_none() && has_malformed_tool_intent(&result.content) {
+            if tool_recovery_retries >= 1 { return Err("Ollama returned malformed tool JSON twice. No incomplete file change was executed. Retry with a shorter request or a stronger tool-calling model.".into()); }
+            tool_recovery_retries += 1;
+            prepare_ollama_tool_recovery(&mut body);
+            continue;
+          }
+          return Ok(result);
+        }
+        Err(error) => {
+          if !tools_enabled || tool_recovery_retries >= 1 || !is_ollama_tool_protocol_error(&error) { return Err(error); }
+          tool_recovery_retries += 1;
+          prepare_ollama_tool_recovery(&mut body);
+          continue;
+        }
+        Ok(None) => {}
+      }
       if empty_retries == 0 {
         empty_retries += 1;
         body["messages"].as_array_mut().unwrap().push(json!({"role":"user","content":"Return a final answer or a tool call for the pending request. Do not repeat tools already completed."}));
@@ -1038,6 +1079,9 @@ mod provider_tests {
     let reply = parse_ollama_reply(&json!({"message":{"content":"","tool_calls":[{"function":{"name":"read","arguments":"{\"filePath\":\"README.md\"}"}}]}})).unwrap().unwrap();
     assert_eq!(reply.tool_calls.unwrap()[0].arguments["filePath"], "README.md");
     assert!(parse_ollama_reply(&json!({"message":{"content":"","thinking":"hidden"}})).unwrap().is_none());
+    assert!(is_ollama_tool_protocol_error("error parsing tool call: unexpected end of JSON input"));
+    assert!(has_malformed_tool_intent("<tool_call>{\"name\":\"write\",\"arguments\":{"));
+    assert!(!has_malformed_tool_intent("<tool_call>{\"name\":\"read\",\"arguments\":{\"filePath\":\"README.md\"}}</tool_call>"));
   }
 
   #[test]
@@ -1049,10 +1093,20 @@ mod provider_tests {
 }
 
 fn main() {
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .invoke_handler(tauri::generate_handler![open_external_url, app_version, check_app_update, install_app_update, ask_model, list_local_models, pull_local_model, delete_local_model, list_provider_models, start_vscode_web, pick_workspace_folder, list_workspace_tree, read_workspace_file, write_workspace_file, create_workspace_dir, run_shell_command, inspect_preview, start_dev_server, stop_dev_server, dev_server_status])
-    .run(tauri::generate_context!())
-    .expect("error while running CodePlus");
+    .build(tauri::generate_context!())
+    .expect("error while building CodePlus");
+  app.run(|app_handle, event| {
+    #[cfg(target_os = "macos")]
+    if matches!(event, tauri::RunEvent::Ready | tauri::RunEvent::Reopen { .. }) {
+      if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+      }
+    }
+  });
 }

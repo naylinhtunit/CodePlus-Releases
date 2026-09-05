@@ -1,14 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createToolAudit, guardToolCall, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage } from '../public/agent-turn.js';
+import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage } from '../public/agent-turn.js';
 
 test('agent quality gate requires a current-turn read before existing-file mutations', () => {
   const audit = createToolAudit();
   const paths = ['src/app/page.tsx', 'src/app/globals.css'];
   assert.match(guardToolCall(audit, 'edit', { filePath: 'src/app/globals.css' }, paths), /read .* before editing/i);
   assert.match(guardToolCall(audit, 'write', { filePath: 'src/app/page.tsx' }, paths), /before overwriting/i);
+  assert.equal(mutationReadPrerequisite(audit, 'write', { filePath: 'src/app/page.tsx' }, paths), 'src/app/page.tsx');
   recordToolResult(audit, 'read', { filePath: 'src/app/globals.css' });
   assert.equal(guardToolCall(audit, 'edit', { filePath: 'src/app/globals.css' }, paths), '');
+  assert.equal(mutationReadPrerequisite(audit, 'edit', { filePath: 'src/app/globals.css' }, paths), '');
 });
 
 test('new files require exploration and local changes require one requirement review', () => {

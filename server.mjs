@@ -522,6 +522,14 @@ function parseOllamaReply(data) {
   if (msg.content?.trim()) return { content: msg.content, tool_calls: null };
   return null; // Thinking is never a final answer or an executable tool call.
 }
+const OLLAMA_TOOL_RECOVERY_PROMPT = 'Your previous tool call was malformed and was not executed. Retry exactly one tool using <tool_call>{"name":"read","arguments":{"filePath":"path/from/project"}}</tool_call>. Use valid JSON, escape newlines inside string values, and include no prose.';
+function isOllamaToolProtocolError(value) {
+  return /(?:parsing|parse|invalid|malformed)[^\n]{0,50}tool|tool[^\n]{0,50}(?:json|arguments)|unexpected end of json/i.test(String(value || ''));
+}
+function hasMalformedToolIntent(content) {
+  const text = String(content || '');
+  return (/<tool_call>/i.test(text) || /\{\s*"name"\s*:/i.test(text)) && !parseToolCallsFallback(text);
+}
 function normalizeToolArgs(args) {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
   const out = {};
@@ -615,14 +623,36 @@ async function askModel({ provider, model, messages, localUrl, apiKey, context, 
     const url = `${(localUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '')}/api/chat`;
     const body = ollamaBody(model, messages, toolsEnabled);
     let emptyRetries = 0;
+    let toolRecoveryRetries = 0;
     while (true) {
       const response = await ollamaFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok) {
         if (body.tools && /not support tools/i.test(String(data.error))) { delete body.tools; continue; }
+        if (toolsEnabled && toolRecoveryRetries < 1 && isOllamaToolProtocolError(data.error)) {
+          toolRecoveryRetries++;
+          delete body.tools;
+          body.messages.push({ role: 'user', content: OLLAMA_TOOL_RECOVERY_PROMPT });
+          continue;
+        }
         throw new Error(`Ollama HTTP ${response.status}: ${data.error || 'Model request failed'}`);
       }
-      const result = parseOllamaReply(data);
+      let result;
+      try { result = parseOllamaReply(data); }
+      catch (error) {
+        if (!toolsEnabled || toolRecoveryRetries >= 1 || !isOllamaToolProtocolError(error?.message)) throw error;
+        toolRecoveryRetries++;
+        delete body.tools;
+        body.messages.push({ role: 'user', content: OLLAMA_TOOL_RECOVERY_PROMPT });
+        continue;
+      }
+      if (result && toolsEnabled && !result.tool_calls && hasMalformedToolIntent(result.content)) {
+        if (toolRecoveryRetries >= 1) throw new Error('Ollama returned malformed tool JSON twice. No incomplete file change was executed. Retry with a shorter request or a stronger tool-calling model.');
+        toolRecoveryRetries++;
+        delete body.tools;
+        body.messages.push({ role: 'user', content: OLLAMA_TOOL_RECOVERY_PROMPT });
+        continue;
+      }
       if (result) return result;
       if (emptyRetries++ === 0) {
         body.messages.push({ role: 'user', content: 'Return a final answer or a tool call for the pending request. Do not repeat tools already completed.' });

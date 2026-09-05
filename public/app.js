@@ -1,6 +1,6 @@
 import { renderWorkspace, listen } from './workspace-dom.js';
 import { apiHistory, modelError } from './agent-history.js';
-import { createToolAudit, guardToolCall, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
+import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
 import { casualHistory, promptNeedsTools, promptRequestsMutation } from './prompt-intent.js';
 
 const initialFiles = {
@@ -683,7 +683,15 @@ async function executeTool(name, args, audit = null) {
   if (fsMode() !== 'memory' && ['read', 'write', 'edit', 'glob'].includes(name)) await scanWorkspace();
   const knownPaths = fsMode()==='memory' ? Object.keys(state.files) : state.treePaths;
   const blocked = guardToolCall(audit, name, args, knownPaths);
-  if (blocked) return blocked;
+  if (blocked) {
+    const prerequisite = mutationReadPrerequisite(audit, name, args, knownPaths);
+    if (prerequisite && !blocked.includes('preserve-constraint')) {
+      const current = await agentRead(prerequisite, audit);
+      recordToolResult(audit, 'read', { filePath: prerequisite });
+      return `CodePlus automatically loaded ${prerequisite} before ${name}. No change was applied by this call. Review the current content below, then issue one precise edit/write call:\n\n${String(current).slice(0, 28000)}`;
+    }
+    return blocked;
+  }
   let output;
   switch (name) {
     case 'read': output = await agentRead(args.filePath, audit); break;

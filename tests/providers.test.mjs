@@ -105,6 +105,20 @@ test('Ollama tools-unsupported fallback keeps thinking mode and has bounded empt
   assert.equal(bodies.length, 2); assert.equal(bodies[1].think, 'medium'); assert.ok(!bodies[1].tools);
 });
 
+test('Ollama repairs one malformed native tool call through the safe text protocol', async () => {
+  const bodies = [];
+  const api = providerFixture(async (_url, options) => {
+    const body = JSON.parse(options.body); bodies.push(body);
+    if (body.tools) return reply({ error: 'error parsing tool call: unexpected end of JSON input' }, 500);
+    return reply({ message: { content: '<tool_call>{"name":"read","arguments":{"filePath":"src/app/globals.css"}}</tool_call>' } });
+  });
+  const result = await api.askModel({ provider: 'local', model: 'gpt-oss:20b', messages: [], toolsEnabled: true });
+  assert.equal(bodies.length, 2);
+  assert.ok(!bodies[1].tools);
+  assert.match(bodies[1].messages.at(-1).content, /previous tool call was malformed/i);
+  assert.equal(result.tool_calls[0].arguments.filePath, 'src/app/globals.css');
+});
+
 for (const provider of ['openai', 'groq', 'deepseek', 'mistral', 'xai', 'openrouter', 'together', 'fireworks', 'cerebras']) {
   test(`${provider}: tool histories use OpenAI wire format and retain the selected model`, async () => {
     const api = providerFixture(async (_url, options) => {

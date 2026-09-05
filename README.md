@@ -1,5 +1,11 @@
 # CodePlus
 
+### v0.1.27 — Local-agent recovery and stable desktop launch
+
+Ollama local model က malformed native tool-call JSON ပြန်ပေးလျှင် error ဖြင့်ချက်ချင်းရပ်မသွားတော့ပါ။ CodePlus က မပြည့်စုံသော call ကို မ execute ဘဲ safe text-tool protocol သို့ တစ်ကြိမ်ပြောင်းပြီး valid call ကို bounded retry လုပ်ပါသည်။ Existing file ကို မဖတ်ဘဲ edit/write တောင်းလာလျှင်လည်း `Blocked` loop မဖြစ်စေရန် CodePlus က current file ကို အလိုအလျောက်ဖတ်ပေးပြီး model အား precise mutation call ပြန်ပို့ခိုင်းပါသည်။ Preserve constraints နှင့် incomplete JSON protection များကို ဆက်ထိန်းထားပါသည်။
+
+macOS app နှင့် updater archive များကို valid ad-hoc bundle signature ဖြင့် build လုပ်ပြီး `_CodeSignature/CodeResources` ပါရှိမှုကို release pipeline တွင်စစ်ပါသည်။ Update install ပြီးနောက် filesystem settle time ပေးကာ restart လုပ်သလို app Ready/Reopen event တွင် main window ကို show, unminimize နှင့် focus ပြန်လုပ်သောကြောင့် first launch နှင့် update relaunch ပိုမိုတည်ငြိမ်ပါသည်။
+
 ### v0.1.26 — Codex-style completion details
 
 Coding Agent အလုပ်ပြီးဆုံးချိန်တွင် Codex ကဲ့သို့ `Worked for Xm Ys` ဖြင့် အမှန်တကယ်ကြာချိန်ကို ပြသပြီး၊ အောက်တွင် ပြင်ဆင်ပြီးကြောင်းနှင့် အဓိကပြောင်းလဲမှုများကို တိုတိုချုံးချုံးဖော်ပြပါသည်။ Model ထုတ်သော ရှည်လျားသည့် audit၊ code block နှင့် ထပ်နေသည့်ရှင်းလင်းချက်များကို final result တွင် အလိုအလျောက်ချုံ့ပေးပါသည်။

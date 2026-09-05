@@ -73,6 +73,21 @@ jobs:
           set -euo pipefail
           test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "Missing original updater signing key"; exit 1; }
           npm run desktop:build -- ${{ matrix.args }}
+      - name: Verify macOS app and updater bundle signatures
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find src-tauri/target -path '*/release/bundle/macos/CodePlus.app' -print -quit)"
+          archive_path="$(find src-tauri/target -path '*/release/bundle/macos/CodePlus.app.tar.gz' -print -quit)"
+          test -n "$app_path" && test -n "$archive_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          test -f "$app_path/Contents/_CodeSignature/CodeResources"
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf "$verify_dir"' EXIT
+          tar -xzf "$archive_path" -C "$verify_dir"
+          codesign --verify --deep --strict --verbose=2 "$verify_dir/CodePlus.app"
+          test -f "$verify_dir/CodePlus.app/Contents/_CodeSignature/CodeResources"
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
