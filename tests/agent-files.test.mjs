@@ -27,12 +27,14 @@ function fixture(desktop) {
   return { ...sandbox.fixture, disk, sandbox };
 }
 
-test('agent completion ignores verbose model prose and returns only audited edited files', () => {
+test('agent completion keeps a compact summary, duration and audited edited files', () => {
   const f = fixture(false), audit = auditTools.createToolAudit();
   audit.changed.add('z.css');
   audit.changed.add('src/a.ts');
-  const message = f.agentCompletionMessage(audit);
-  assert.equal(message.content, 'Changes completed.');
+  const message = f.agentCompletionMessage(audit, '**Updated the page**\n\n- Matched both controls.\n- Verified responsive behavior.\nExtra line.\nIgnored line.', 83_000);
+  assert.match(message.content, /^Updated the page\n• Matched both controls\./);
+  assert.doesNotMatch(message.content, /Ignored line/);
+  assert.equal(message.durationMs, 83_000);
   assert.deepEqual([...message.editedFiles], ['src/a.ts', 'z.css']);
   assert.equal(message.completion, true);
 });

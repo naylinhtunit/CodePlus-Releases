@@ -191,12 +191,14 @@ test('completed agent work shows only the verified edited files and opens them i
   const f = fixture();
   f.state.messages.push({
     id: 'completion', role: 'assistant', mode: 'agent', completion: true,
-    content: 'Changes completed.', editedFiles: ['src/app/globals.css']
+    content: 'Updated both button styles and verified the result.', durationMs: 754_000, editedFiles: ['src/app/globals.css']
   });
   f.render();
   const result = f.root.querySelector('[data-message-id="completion"]');
   assert.ok(result.classList.contains('completion'));
-  assert.equal(result.querySelector('.msg-body').textContent, 'Changes completed.');
+  assert.equal(result.querySelector('.completion-worked').textContent.trim(), 'Worked for 12m 34s›');
+  assert.equal(result.querySelector('.completion-summary').textContent, 'Updated both button styles and verified the result.');
+  assert.equal(result.querySelector('.completion-edits-head').textContent.includes('Edited 1 file'), true);
   assert.equal(result.querySelectorAll('[data-open-edited-file]').length, 1);
   assert.equal(result.textContent.includes('Verification Summary'), false);
   result.querySelector('[data-open-edited-file]').click();

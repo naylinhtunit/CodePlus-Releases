@@ -1,5 +1,11 @@
 # CodePlus
 
+### v0.1.26 — Codex-style completion details
+
+Coding Agent အလုပ်ပြီးဆုံးချိန်တွင် Codex ကဲ့သို့ `Worked for Xm Ys` ဖြင့် အမှန်တကယ်ကြာချိန်ကို ပြသပြီး၊ အောက်တွင် ပြင်ဆင်ပြီးကြောင်းနှင့် အဓိကပြောင်းလဲမှုများကို တိုတိုချုံးချုံးဖော်ပြပါသည်။ Model ထုတ်သော ရှည်လျားသည့် audit၊ code block နှင့် ထပ်နေသည့်ရှင်းလင်းချက်များကို final result တွင် အလိုအလျောက်ချုံ့ပေးပါသည်။
+
+အောက်ဆုံး **Edited files** card တွင် verified audit အရ အမှန်တကယ်ပြောင်းထားသော file များကိုသာ စာရင်းပြပြီး၊ file တစ်ခုကိုနှိပ်လျှင် editor တွင် တိုက်ရိုက်ဖွင့်ပေးပါသည်။ Web, macOS နှင့် Windows အားလုံးတွင် တူညီသော completion layout ကိုအသုံးပြုပါသည်။
+
 ### v0.1.25 — Live agent progress and concise completion
 
 Coding Agent အလုပ်လုပ်နေစဉ် `Reading`, `Editing`, `Writing`, `Running`, `Searching` နှင့် `Inspecting preview` လုပ်ဆောင်ချက်များကို live **Working** card အဖြစ်ပြပြီး၊ ပြီးဆုံးချိန်တွင် `Done`, `Failed` သို့မဟုတ် `Blocked` status ဖြင့် အမှားနှင့်အခြေအနေကိုကြည့်နိုင်ပါသည်။

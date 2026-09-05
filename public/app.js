@@ -272,13 +272,34 @@ function appendMessage(message) {
   persistChatHistory();
   return item;
 }
-function agentCompletionMessage(audit) {
+function compactAgentSummary(content, editedFiles = []) {
+  const clean = String(content || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/\*\*/g, '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !/^\|[-:|\s]+\|$/.test(line))
+    .slice(0, 4)
+    .join('\n');
+  if (clean) return clean.length > 520 ? `${clean.slice(0, 517).trimEnd()}…` : clean;
+  return editedFiles.length ? `Updated ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'} and verified the requested change.` : 'Checked the requested result; no file changes were needed.';
+}
+function formatWorkedTime(durationMs) {
+  const seconds = Math.max(1, Math.round((Number(durationMs) || 0) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+function agentCompletionMessage(audit, summary = '', durationMs = 0) {
   const editedFiles = [...(audit?.changed || [])].sort((left, right) => left.localeCompare(right));
   return {
     role: 'assistant',
     mode: 'agent',
     completion: true,
-    content: editedFiles.length ? 'Changes completed.' : 'Completed. No files changed.',
+    content: compactAgentSummary(summary, editedFiles),
+    durationMs: Math.max(0, Number(durationMs) || 0),
     editedFiles
   };
 }
@@ -423,17 +444,19 @@ function messages() {
         return `<div class="message tool running" data-message-id="${escape(m.id)}:${escape(call.id)}"><div class="tool-running-row"><span class="tool-spinner" aria-hidden="true"></span><span class="tool-label">${escape(labels[call.name] || call.name || 'Working')}</span>${target ? `<code title="${escapeAttr(target)}">${escape(String(target).slice(0,160))}</code>` : ''}<span class="tool-status">Working</span></div></div>`;
       }).join('');
     }
+    if (m.completion) {
+      const editedFiles = Array.isArray(m.editedFiles) ? m.editedFiles : [];
+      const files = editedFiles.map(path => `<button type="button" data-open-edited-file="${escapeAttr(path)}" title="Open ${escapeAttr(path)}"><span>✓</span><code>${escape(path)}</code></button>`).join('');
+      return `<div class="message completion" data-message-id="${escape(m.id)}"><div class="completion-worked">Worked for ${escape(formatWorkedTime(m.durationMs))}<span aria-hidden="true">›</span></div><div class="completion-summary">${escape(m.content || '')}</div>${editedFiles.length ? `<section class="completion-edits"><div class="completion-edits-head"><span class="completion-edits-icon">↳</span><strong>Edited ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'}</strong></div><div class="completion-files">${files}</div></section>` : '<div class="completion-no-files">No files edited</div>'}</div>`;
+    }
     const body = m.content ? `<div class="msg-body">${escape(m.content)}</div>` : '';
-    const editedFiles = m.completion && Array.isArray(m.editedFiles) && m.editedFiles.length
-      ? `<div class="completion-files">${m.editedFiles.map(path => `<button type="button" data-open-edited-file="${escapeAttr(path)}" title="Open ${escapeAttr(path)}"><span>✓</span><code>${escape(path)}</code></button>`).join('')}</div>`
-      : '';
     const images = (m.images || []).map(img => `<div class="msg-image"><img src="${escape(img.image_url?.url || '')}" alt="uploaded image" /></div>`).join('');
     const copied = state.copiedMessageId === m.id;
     const copyAction = m.content ? `<button type="button" data-copy-message="${escape(m.id)}" title="Copy message" aria-label="Copy message">${copied ? '<span class="action-check">✓</span>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>'}</button>` : '';
     const editAction = m.role==='user' && m.content ? `<button type="button" data-edit-message="${escape(m.id)}" title="Edit and resend" aria-label="Edit message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6a2 2 0 0 0-2.8-2.8L5.4 16.2 4 20Z"/><path d="m14.5 7.1 2.8 2.8"/></svg></button>` : '';
     const actions = copyAction || editAction ? `<div class="message-actions">${copyAction}${editAction}</div>` : '';
     const editedNote = m.editedFrom ? '<span class="edited-note">Edited copy</span>' : '';
-    return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.completion ? 'completion' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${editedFiles}${images}${m.content?.trim() ? toolCalls : ''}</div>`;
+    return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${images}${m.content?.trim() ? toolCalls : ''}</div>`;
   }).join('') + (state.todos.length ? `<div class="message todos"><span class="role">Todos</span>${state.todos.map(t=>`<div class="todo ${t.status}"><span>${t.status==='completed'?'✓':t.status==='in_progress'?'◉':'○'} ${escape(t.content)}</span><span class="prio">${escape(t.priority||'')}</span></div>`).join('')}</div>` : '');
 }
 function compactModelName(id, name = '', max = 38) {
@@ -2111,6 +2134,7 @@ async function callModel(messagesForApi, context, requireTool = false) {
 }
 async function sendPrompt(event) {
   event.preventDefault(); if (state.sending) return;
+  const turnStartedAt = Date.now();
   const input = document.querySelector('#prompt');
   const content = input.value.trim(); if (!content && state.uploads.length === 0) return;
   let providerDefault = providerInfo(state.provider).model;
@@ -2221,7 +2245,7 @@ async function sendPrompt(event) {
           break;
         }
       }
-      appendMessage(toolsEnabled ? agentCompletionMessage(toolAudit) : { role:'assistant', mode: turnMode, content: result.content });
+      appendMessage(toolsEnabled ? agentCompletionMessage(toolAudit, result.content, Date.now() - turnStartedAt) : { role:'assistant', mode: turnMode, content: result.content });
       completed = true;
       break;
     }

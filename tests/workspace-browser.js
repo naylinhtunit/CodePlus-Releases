@@ -91,11 +91,12 @@ async function run() {
     app(); await pause(20);
     check(/Editing.*b\.css.*Working/.test(document.querySelector('.tool-running-row')?.textContent || ''), 'Live tool progress is not visible');
     state.messages.push({ id: 'progress-result', role: 'tool', name: 'edit', tool_call_id: 'progress-edit', content: 'Wrote b.css' });
-    state.messages.push({ id: 'progress-complete', role: 'assistant', mode: 'agent', completion: true, content: 'Changes completed.', editedFiles: ['b.css'] });
+    state.messages.push({ id: 'progress-complete', role: 'assistant', mode: 'agent', completion: true, content: 'Updated the stylesheet and verified the result.', durationMs: 83_000, editedFiles: ['b.css'] });
     app(); await pause(20);
     check(!document.querySelector('.tool-running-row'), 'Finished tool still appears as running');
     const editedFile = document.querySelector('[data-open-edited-file="b.css"]');
-    check(editedFile && /Changes completed\./.test(document.querySelector('[data-message-id="progress-complete"]')?.textContent || ''), 'Concise completion or edited file is missing');
+    const completionText = document.querySelector('[data-message-id="progress-complete"]')?.textContent || '';
+    check(editedFile && /Worked for 1m 23s/.test(completionText) && /Edited 1 file/.test(completionText), 'Worked time, concise completion or edited file is missing');
     editedFile.click(); await pause(20);
     check(state.active === 'b.css' && document.querySelector('#code').value === state.files['b.css'], 'Edited file result did not open in editor');
     results.push('Agent progress: live Working state, compact completion and edited-file open verified');
