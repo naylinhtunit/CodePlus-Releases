@@ -5,7 +5,7 @@ const listeners = new WeakMap();
 
 function key(node) {
   if (node.nodeType !== 1) return '';
-  for (const attribute of ['id', 'data-panel', 'data-message-id', 'data-file', 'data-folder']) {
+  for (const attribute of ['id', 'data-panel', 'data-message-id', 'data-project-id', 'data-file', 'data-folder']) {
     if (node.hasAttribute(attribute)) return `${attribute}:${node.getAttribute(attribute)}`;
   }
   return '';

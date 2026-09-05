@@ -1,5 +1,11 @@
 # CodePlus
 
+### v0.1.24 — Project tree controls and desktop file creation
+
+Projects sidebar အောက်ရှိ **Export project JSON** card တစ်ခုလုံးကို ဖယ်ရှားထားပါသည်။ Active project folder ကိုနှိပ်လျှင် file tree ကို show/hide လုပ်နိုင်ပြီး၊ project အတွင်းရှိ nested folder များကို default အနေဖြင့်ပိတ်ထားသောကြောင့် sidebar တစ်ခုလုံး အလိုအလျောက်ပြန့်မနေတော့ပါ။ Folder တစ်ခုချင်းကိုနှိပ်မှသာ ၎င်းအတွင်းရှိ folder နှင့် file များ ပွင့်ပါသည်။
+
+Project name ဘေးရှိ `+` သည် browser-native prompt ကိုမသုံးတော့ဘဲ CodePlus ၏ **New file** dialog ကိုသုံးပါသည်။ Relative path ကိုစစ်ဆေးပြီး browser, macOS နှင့် Windows တွင် တူညီစွာ file/folder ကိုဖန်တီးကာ editor ထဲတိုက်ရိုက်ဖွင့်ပေးပါသည်။
+
 ### v0.1.23 — Multi-project sidebar and separate project chats
 
 ဘယ်ဘက် **Explorer** ကို **Projects** ဟု ပြောင်းထားပြီး၊ header ရှိ `Workspaces / project name` ကိုဖယ်ရှားထားပါသည်။ **Projects** ဘေးရှိ `+` မှ ရှိပြီးသား folder ကို open/upload လုပ်နိုင်သလို starter project အသစ်လည်းဖန်တီးနိုင်ပါသည်။

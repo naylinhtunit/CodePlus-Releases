@@ -160,8 +160,8 @@ const state = {
   keyDrafts: {}, keyEditing: {}, keyRemoveConfirm: '', modelDeleteConfirm: null,
   cloudModels: Object.fromEntries(PROVIDERS.filter(item=>item.group==='Cloud').map(item=>[item.id, structuredClone(item.models || [])])), cloudModelsLoaded: {}, cloudModelLoading: {}, cloudModelError: {},
   messages: [], chatHistoryKey: '', editingMessageId: '', copiedMessageId: '', sending: false, turnProvider: null, stopRequested: false, abortController: null, stopPromise: null, stopReject: null, settingsOpen: false, modelPickerOpen: false, dirty: false, dirtyFiles: new Set(), vscodeNote: '', vscodeConsent: false, vscodeView: false, vscodeUrl: '',
-  folders: { src: true, 'src/app': true, 'src/components': false }, previewUrl: localStorage.getItem('codeplus-preview-url') || 'http://localhost:3000', customPreview: Boolean(localStorage.getItem('codeplus-preview-url')),
-  projectName: localStorage.getItem('codeplus-project-name') || 'CodePlus', projects: [], activeProjectId: '', workspacesOpen: false, previewHidden: false, editorClosed: false, filesHidden: localStorage.getItem('codeplus-files-hidden') === 'true', downloadOpen: false,
+  folders: {}, previewUrl: localStorage.getItem('codeplus-preview-url') || 'http://localhost:3000', customPreview: Boolean(localStorage.getItem('codeplus-preview-url')),
+  projectName: localStorage.getItem('codeplus-project-name') || 'CodePlus', projects: [], activeProjectId: '', expandedProjects: {}, workspacesOpen: false, newFileOpen: false, previewHidden: false, editorClosed: false, filesHidden: localStorage.getItem('codeplus-files-hidden') === 'true', downloadOpen: false,
   dirHandle: null, dirPath: '', treePaths: [], fileHandles: {}, loading: new Set(),
   pendingHandle: null, pendingName: '', pendingProjectId: '',
   plusOpen: false, attachPickerOpen: false, attached: [],
@@ -350,7 +350,7 @@ function fileTree() {
   const visit = (node, depth=0, parent='') => Object.entries(node).filter(([name]) => name !== '__file').sort(([a,aNode],[b,bNode]) => Number(Boolean(aNode.__file)) - Number(Boolean(bNode.__file)) || a.localeCompare(b)).map(([name, child]) => {
     const path=parent ? `${parent}/${name}` : name; const isFile=Boolean(child.__file); const [glyph,type]=icon(name,!isFile);
     if (isFile) return row('•',glyph,name,type,depth,child.__file);
-    const open=state.folders[path] ?? true;
+    const open=state.folders[path] ?? false;
     return row(open?'▾':'▸',glyph,name,type,depth,'',path) + (open ? visit(child,depth+1,path) : '');
   }).join('');
   return visit(root);
@@ -359,14 +359,15 @@ function projectsTree() {
   if (!state.projects.length) return '<div class="projects-empty">Use + to create or open a project.</div>';
   return state.projects.map(project => {
     const active = project.id === state.activeProjectId;
+    const expanded = active && (state.expandedProjects[project.id] ?? true);
     const needsReconnect = project.id === state.pendingProjectId;
     return `<section class="project-node ${active ? 'active' : ''}">
       <div class="project-row" data-project-id="${escapeAttr(project.id)}" title="Open ${escapeAttr(project.name)}">
-        <span class="project-chevron">${active ? '▾' : '▸'}</span><span class="project-folder"></span><strong>${escape(project.name)}</strong>
+        <span class="project-chevron">${expanded ? '▾' : '▸'}</span><span class="project-folder"></span><strong>${escape(project.name)}</strong>
         ${active ? '<button type="button" class="project-file-add" id="new-file" title="New file in this project">＋</button>' : ''}
       </div>
       ${needsReconnect ? '<button type="button" class="project-reconnect" id="reconnect-ws">Reconnect folder</button>' : ''}
-      ${active ? `<div class="project-files">${fileTree()}</div>` : ''}
+      ${expanded ? `<div class="project-files">${fileTree()}</div>` : ''}
     </section>`;
   }).join('');
 }
@@ -973,11 +974,11 @@ function app(forcePreviewReload = false) {
   const appRoot = document.querySelector('#app');
   const workspaceMarkup = el`<main class="shell ${state.vscodeView ? 'vscode-mode' : ''} ${state.filesHidden ? 'files-hidden' : ''}">
     <header class="topbar"><div class="brand"><img class="brand-logo" src="/assets/codeplus-logo.png" alt="CodePlus" />CodePlus</div>${updateButton()}<button class="vscode" id="open-vscode" ${state.vscodeView ? 'disabled' : ''}>${state.vscodeView ? '⌘ VS Code active' : '⌘ VS Code workspace'}</button></header>
-    <aside class="files"><div class="side-heading"><span>PROJECTS</span><button class="small-btn" id="projects-add" title="Open or create project">＋</button></div><div class="projects-tree">${projectsTree()}</div><div class="workspace-card"><strong>${escape(state.projectName)}</strong><span>${state.pendingHandle ? `${escape(state.pendingName)} needs reconnect after refresh.` : fsMode()==='memory' ? 'This project and its chat are stored separately in this browser.' : `Editing directly on disk — ${state.treePaths.length} files. Saves write straight to the folder.`}</span><button id="export-project">Export project JSON</button></div></aside>
+    <aside class="files"><div class="side-heading"><span>PROJECTS</span><button class="small-btn" id="projects-add" title="Open or create project">＋</button></div><div class="projects-tree">${projectsTree()}</div></aside>
     ${workspace}
     <aside class="assistant"><div class="ai-head"><strong>Coding Agent</strong><span>Workspace tools enabled</span><button class="icon-btn gear" id="settings" title="Model settings">⚙</button></div><div class="chat" id="chat">${messages()}</div><form class="composer" id="composer">${composerExtras()}<textarea id="prompt" placeholder="Ask ${escape(compactModelName(state.model || 'a model', '', 32))} to build, edit, test, or debug your code…" ${state.sending ? 'disabled' : ''}>${escape(state.draftPrompt || '')}</textarea><div class="composer-foot"><div class="composer-tools">${state.plusOpen ? `<div class="plus-menu" role="menu"><button type="button" data-plus-action="files">⬆ <span>Files</span><small>Choose from My Computer</small></button><button type="button" data-plus-action="shell">$ <span>Shell Output</span><small>Run and attach a command result</small></button></div>` : ''}<button type="button" class="plus-btn" id="plus-btn" title="Attach optional context" aria-haspopup="menu" aria-expanded="${state.plusOpen}">＋</button><button type="button" class="model-chip" id="model-chip" title="${escape(`${state.provider}: ${state.model || 'Choose a model'}`)}"><span class="dot"></span><span>${escape(providerLabel())}</span></button></div>${state.sending ? '<button class="send stop" id="stop" type="button" title="Stop response" aria-label="Stop response"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" rx="1" /></svg></button>' : '<button class="send" id="send" type="submit" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg></button>'}</div></form></aside>
     <footer class="status"><span>◉ <span class="branch">main</span></span><span>${fsMode()==='memory' ? Object.keys(state.files).length : state.treePaths.length} files</span><span>${state.dirtyFiles.size ? `● ${state.dirtyFiles.size} unsaved — ⌘/Ctrl+S to save` : '✓ saved locally'}</span><span class="live">● Local workspace</span></footer>
-  </main>${state.settingsOpen ? modal() : ''}${state.modelPickerOpen ? modelPickerModal() : ''}${state.attachPickerOpen ? attachModal() : ''}${state.vscodeConsent ? vscodeConsentModal() : ''}${state.workspacesOpen ? workspaceModal() : ''}${state.vscodeNote ? `<div class="toast ${state.vscodeNote.startsWith('Could') || state.vscodeNote.startsWith('Enter a valid') || state.vscodeNote.startsWith('Update failed') ? '' : 'success'}">${escape(state.vscodeNote)}</div>` : ''}`;
+  </main>${state.settingsOpen ? modal() : ''}${state.modelPickerOpen ? modelPickerModal() : ''}${state.attachPickerOpen ? attachModal() : ''}${state.vscodeConsent ? vscodeConsentModal() : ''}${state.workspacesOpen ? workspaceModal() : ''}${state.newFileOpen ? newFileModal() : ''}${state.vscodeNote ? `<div class="toast ${state.vscodeNote.startsWith('Could') || state.vscodeNote.startsWith('Enter a valid') || state.vscodeNote.startsWith('Update failed') ? '' : 'success'}">${escape(state.vscodeNote)}</div>` : ''}`;
   renderWorkspace(appRoot, workspaceMarkup, { reloadPreview: forcePreviewReload });
   // Keep the syntax overlay aligned when another panel updates mid-edit.
   const code = document.querySelector('#code');
@@ -1549,10 +1550,16 @@ async function activateMemoryProject(project, files=null, note='') {
   return paths.length;
 }
 async function switchProject(projectId) {
-  if (!projectId || projectId === state.activeProjectId) return;
+  if (!projectId) return;
+  if (projectId === state.activeProjectId) {
+    state.expandedProjects[projectId] = !(state.expandedProjects[projectId] ?? true);
+    app();
+    return;
+  }
   const project = state.projects.find(item => item.id === projectId);
   if (!project) return;
   try {
+    state.expandedProjects[projectId] = true;
     if (project.kind === 'native') await activateWorkspace({ native:project.path, project });
     else if (project.kind === 'memory') await activateMemoryProject(project);
     else {
@@ -1631,6 +1638,46 @@ function vscodeConsentModal() { return `<div class="modal-backdrop"><section cla
 function workspaceModal() {
   const canDisk = Boolean(window.__TAURI_INTERNALS__ || isLocalHost() || ('showDirectoryPicker' in window));
   return `<div class="modal-backdrop"><section class="modal workspace-modal" role="dialog" aria-modal="true"><h2>Add a project</h2><p>Open an existing project folder or create a new starter. Existing projects and their chats stay in the Projects list.</p>${canDisk ? '<button type="button" class="import-project" id="open-folder"><strong>Open project folder…</strong><span>Pick any folder on this machine. CodePlus edits it in place.</span></button><div class="workspace-divider"><span>New project</span></div>' : ''}<form id="create-workspace"><div class="field"><label for="workspace-name">New project name</label><input id="workspace-name" value="New CodePlus project" required maxlength="80" /></div>${canDisk ? '<small class="workspace-help">You will pick the parent folder next. Starter files are written to disk immediately.</small>' : ''}<div class="modal-actions"><button type="button" id="cancel-workspaces">Cancel</button><button class="primary" type="submit">Create project</button></div></form>${canDisk ? '' : '<div class="workspace-divider"><span>or upload a copy</span></div><label class="import-project" for="import-project"><strong>Upload existing project folder</strong><span>The project copy and its chat are stored separately in this browser.</span></label><input id="import-project" type="file" webkitdirectory directory multiple hidden />'}</section></div>`;
+}
+function newFileModal() {
+  return `<div class="modal-backdrop"><section class="modal new-file-modal" role="dialog" aria-modal="true" aria-labelledby="new-file-title"><h2 id="new-file-title">New file</h2><p>Create a file inside <strong>${escape(state.projectName)}</strong>. Include folders in the path when needed.</p><form id="create-project-file"><div class="field"><label for="new-file-path">File path</label><input id="new-file-path" placeholder="src/components/button.tsx" required maxlength="240" autocomplete="off" /></div><div class="modal-actions"><button type="button" id="cancel-new-file">Cancel</button><button class="primary" type="submit">Create file</button></div></form></section></div>`;
+}
+async function createProjectFile(event) {
+  event.preventDefault();
+  const input = document.querySelector('#new-file-path');
+  const name = String(input?.value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  const parts = name.split('/');
+  if (!name || name.startsWith('/') || parts.some(part => !part || part === '.' || part === '..')) {
+    input?.setCustomValidity('Enter a relative file path without empty, . or .. segments.');
+    input?.reportValidity();
+    input?.setCustomValidity('');
+    return;
+  }
+  const exists = state.files[name] != null || state.treePaths.includes(name);
+  try {
+    if (!exists) {
+      state.files[name] = '// New file\n';
+      if (fsMode() !== 'memory') {
+        await writeFileAt(name, state.files[name]);
+        if (!state.treePaths.includes(name)) { state.treePaths.push(name); state.treePaths.sort(); }
+      } else await persistMemoryProject();
+    } else if (state.files[name] == null) await ensureLoaded(name);
+    let parent = '';
+    for (const segment of parts.slice(0, -1)) {
+      parent = parent ? `${parent}/${segment}` : segment;
+      state.folders[parent] = true;
+    }
+    state.expandedProjects[state.activeProjectId] = true;
+    state.active = name; state.editorClosed = false; state.dirty = state.dirtyFiles.has(name); state.newFileOpen = false;
+    localStorage.setItem(projectValueKey('active-file'), name);
+    state.vscodeNote = `${exists ? 'Opened' : 'Created'} ${name}.`;
+    app();
+  } catch (error) {
+    if (!exists) delete state.files[name];
+    state.newFileOpen = false;
+    state.vscodeNote = `Could not create ${name}: ${error.message || error}`;
+    app();
+  }
 }
 function formatActiveFile() {
   const source=state.files[state.active];
@@ -1720,8 +1767,9 @@ function bind() {
   listen(document.querySelector('#toggle-preview'), 'click', () => { state.previewHidden=!state.previewHidden; app(); });
   listen(document.querySelector('#toggle-files'), 'click', () => { state.filesHidden=!state.filesHidden; localStorage.setItem('codeplus-files-hidden',String(state.filesHidden)); app(); });
   listen(document.querySelector('#close-file'), 'click', () => { state.editorClosed=true; state.previewHidden=false; app(); });
-  listen(document.querySelector('#new-file'), 'click', async event => { event.stopPropagation(); const name=prompt('File path, e.g. src/components/button.tsx'); if (!name) return; if (state.files[name]==null) state.files[name]='// New file\n'; if (fsMode()!=='memory') { try { await writeFileAt(name, state.files[name]); if (!state.treePaths.includes(name)) { state.treePaths.push(name); state.treePaths.sort(); } } catch (error) { state.vscodeNote=`Could not create ${name} on disk.`; app(); return; } } else await persistMemoryProject(); state.active=name; state.editorClosed=false; state.dirty=state.dirtyFiles.has(name); localStorage.setItem(projectValueKey('active-file'), name); app(); });
-  listen(document.querySelector('#export-project'), 'click', () => { const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state.files,null,2)],{type:'application/json'}));a.download='codeplus-project.json';a.click();URL.revokeObjectURL(a.href); });
+  listen(document.querySelector('#new-file'), 'click', event => { event.stopPropagation(); state.newFileOpen=true; app(); requestAnimationFrame(() => document.querySelector('#new-file-path')?.focus()); });
+  listen(document.querySelector('#create-project-file'), 'submit', createProjectFile);
+  listen(document.querySelector('#cancel-new-file'), 'click', () => { state.newFileOpen=false; app(); });
   listen(document.querySelector('#settings'), 'click', openProviderSettings);
   listen(document.querySelector('#open-vscode'), 'click', () => { state.vscodeConsent=true; app(); });
   listen(document.querySelector('#projects-add'), 'click', () => { state.workspacesOpen=true; app(); });

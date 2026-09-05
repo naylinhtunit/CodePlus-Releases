@@ -83,10 +83,6 @@ button,input,select,textarea { font:inherit; }
 .source-folder { color:#65a5ff; }.app-folder { color:#d6a5ff; }.component-folder { color:#6fdaa8; }
 .react-file { color:#67d8f9;font-size:14px; }.css-file { color:#b79aff; }.typescript-file { color:#55a8ff;font-size:9px; }.config-file { color:#f3bc64; }.markdown-file { color:#5ab9ee; }
 .tree-row.changed::after { content:'•'; color:var(--mint); margin-left:auto; }
-.workspace-card { margin:16px 14px;padding:13px;border:1px solid var(--line); border-radius:9px;background:#131725; }
-.workspace-card strong { display:block;font-size:12px }
-.workspace-card span { display:block; color:var(--soft);font-size:11px;margin-top:4px; }
-.workspace-card button { width:100%;margin-top:11px;background:transparent;border:1px solid #465270;color:#cbd4eb;border-radius:6px;padding:6px;font-size:11px; }
 
 .work { grid-row:2; display:grid; grid-template-rows:43px minmax(0,1fr); background:#0b0e17; min-width:0; min-height:0; }
 .shell.vscode-mode { grid-template-columns:minmax(700px,1.08fr) minmax(420px,.92fr) 342px; }
@@ -248,7 +244,6 @@ button,input,select,textarea { font:inherit; }
 .import-project:hover { border-color:#8ca3ff;background:#18213a; }
 .workspace-modal .import-project strong { font-size:13px;color:#fff; }
 .import-project span { color:#91a0ba;font-size:11px;line-height:1.45; }
-.workspace-card button.reconnect { border-color:#8ca3ff;color:#b9c9ff; }
 .composer-foot{display:flex;align-items:center;gap:10px}
 .composer-tools{display:flex;align-items:center;gap:7px;position:relative;margin-right:auto}
 .plus-btn{width:30px;height:30px;flex:0 0 auto;border-radius:8px;border:1px solid #3b455d;background:#1b2233;color:#dce5f5;font-size:16px;line-height:1;cursor:pointer}

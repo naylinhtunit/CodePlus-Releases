@@ -17,7 +17,7 @@ function fixture(desktop = false, appSource = source) {
     setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback),
   };
   vm.createContext(sandbox);
-  vm.runInContext(appSource.slice(0, appSource.lastIndexOf('\napp();')).replace(/^import .*;\r?\n/gm, '') + '\nthis.ui = { state, app, chatHistoryStorageKey, rememberProject, activateMemoryProject };', sandbox);
+  vm.runInContext(appSource.slice(0, appSource.lastIndexOf('\napp();')).replace(/^import .*;\r?\n/gm, '') + '\nthis.ui = { state, app, chatHistoryStorageKey, rememberProject, activateMemoryProject, createProjectFile };', sandbox);
   const { state, app } = sandbox.ui;
   Object.assign(state, { customPreview: true, previewUrl: 'http://localhost:3000/', localModelsLoaded: true });
   const render = () => { app(); while (frames.length) frames.shift()(); };
@@ -39,7 +39,40 @@ test('Projects sidebar retains project folders and gives every project a separat
   assert.ok(f.root.querySelector('#projects-add'));
   assert.equal(f.root.querySelector('#workspaces'), null);
   assert.equal(f.state.projects.some(project => project.id === firstId), true);
+  assert.equal(f.root.querySelector('.workspace-card'), null);
+  assert.equal(f.root.querySelector('#export-project'), null);
 });
+
+test('active project and nested folders expand only when clicked', () => {
+  const f = fixture();
+  const project = f.root.querySelector(`[data-project-id="${f.state.activeProjectId}"]`);
+  assert.ok(f.root.querySelector('.project-files'));
+  assert.ok(f.root.querySelector('[data-folder="src"]'));
+  assert.equal(f.root.querySelector('[data-folder="src/app"]'), null);
+  f.root.querySelector('[data-folder="src"]').click();
+  assert.ok(f.root.querySelector('[data-folder="src/app"]'));
+  assert.equal(f.root.querySelector('[data-file="src/app/page.tsx"]'), null);
+  f.root.querySelector('[data-folder="src/app"]').click();
+  assert.ok(f.root.querySelector('[data-file="src/app/page.tsx"]'));
+  project.click();
+  assert.equal(f.root.querySelector('.project-files'), null);
+  f.root.querySelector(`[data-project-id="${f.state.activeProjectId}"]`).click();
+  assert.ok(f.root.querySelector('.project-files'));
+});
+
+for (const desktop of [false, true]) {
+  test(`${desktop ? 'desktop' : 'web'}: project file button uses the in-app create dialog`, async () => {
+    const f = fixture(desktop);
+    f.root.querySelector('#new-file').click();
+    const input = f.root.querySelector('#new-file-path');
+    assert.ok(input);
+    input.value = `src/platform-${desktop ? 'desktop' : 'web'}.ts`;
+    await f.ui.createProjectFile({ preventDefault() {} });
+    assert.equal(f.state.newFileOpen, false);
+    assert.equal(f.state.active, input.value);
+    assert.equal(f.state.files[input.value], '// New file\n');
+  });
+}
 
 for (const desktop of [false, true]) {
   test(`${desktop ? 'desktop' : 'web'}: Explorer changes preserve preview, chat and draft`, () => {
@@ -49,6 +82,8 @@ for (const desktop of [false, true]) {
     prompt.value = 'Keep my unsent prompt';
     prompt.dispatchEvent(new f.Event('input'));
     chat.scrollTop = 120;
+    f.root.querySelector('[data-folder="src"]').click();
+    f.root.querySelector('[data-folder="src/app"]').click();
     for (const file of ['README.md', 'src/app/globals.css', 'src/app/page.tsx']) {
       f.root.querySelector(`[data-file="${file}"]`).click();
       assert.equal(f.state.active, file);
