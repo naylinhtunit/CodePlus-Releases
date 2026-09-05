@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -111,6 +111,7 @@ fn with_context(mut messages: Vec<Message>, context: &Option<Vec<CtxItem>>) -> V
 
 fn agent_tools() -> Value {
   json!([
+    {"type":"function","function":{"name":"inspect_preview","description":"Measure visible buttons/links and parent layout at preview, mobile and desktop widths in an isolated browser. Use before and after UI sizing edits. Requires Node 22+ and Chrome or Edge.","parameters":{"type":"object","properties":{}}}},
     {"type":"function","function":{"name":"read","description":"Read file content. Use to understand codebase before editing.","parameters":{"type":"object","properties":{"filePath":{"type":"string","description":"Relative path from project root, e.g. src/app/page.tsx"}},"required":["filePath"]}}},
     {"type":"function","function":{"name":"write","description":"Create new file or overwrite existing one. Use for new files; prefer edit for surgical changes.","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"content":{"type":"string","description":"Full file content"}},"required":["filePath","content"]}}},
     {"type":"function","function":{"name":"edit","description":"Exact string replacement in an existing file. oldString must match exactly including whitespace.","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"oldString":{"type":"string"},"newString":{"type":"string"},"replaceAll":{"type":"boolean"}},"required":["filePath","oldString","newString"]}}},
@@ -219,6 +220,27 @@ fn run_shell_command(root: Option<String>, command: String) -> Result<String, St
   if timed_out { result.push_str(if result.is_empty() {"[command timed out after 30s]"} else {"\n[command timed out after 30s]"}); }
   else if !status.success() { result.push_str(&format!("{}[exit code {}]", if result.is_empty() {""} else {"\n"}, status.code().unwrap_or(1))); }
   Ok(result.chars().take(24000).collect())
+}
+
+#[tauri::command]
+async fn inspect_preview(request: Value) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    // Fixed Node program via stdin; never interpolate a model argument into a shell.
+    let mut process = runtime::shell_command("node --input-type=module");
+    let mut child = process.env("CODEPLUS_PREVIEW_REQUEST", request.to_string())
+      .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+      .spawn().map_err(|e| format!("Preview inspection needs Node.js 22+ and Chrome or Edge: {e}"))?;
+    child.stdin.take().ok_or("Could not open inspector input")?
+      .write_all(include_str!("../../scripts/inspect-preview.mjs").as_bytes()).map_err(|e| e.to_string())?;
+    let mut stdout = child.stdout.take().ok_or("Could not read inspector output")?;
+    let reader = std::thread::spawn(move || { let mut bytes = Vec::new(); let _ = stdout.read_to_end(&mut bytes); bytes });
+    if child.wait_timeout(Duration::from_secs(35)).map_err(|e| e.to_string())?.is_none() {
+      let _ = child.kill(); let _ = child.wait();
+      return Err("Preview inspection timed out; no visual verification was recorded.".into());
+    }
+    serde_json::from_slice(&reader.join().unwrap_or_default())
+      .map_err(|_| "Preview inspection requires Node.js 22+ and Google Chrome or Microsoft Edge. Quit and reopen CodePlus after installation.".into())
+  }).await.map_err(|e| e.to_string())?
 }
 
 #[derive(Debug, Deserialize)]
@@ -1030,7 +1052,7 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
-    .invoke_handler(tauri::generate_handler![open_external_url, app_version, check_app_update, install_app_update, ask_model, list_local_models, pull_local_model, delete_local_model, list_provider_models, start_vscode_web, pick_workspace_folder, list_workspace_tree, read_workspace_file, write_workspace_file, create_workspace_dir, run_shell_command, start_dev_server, stop_dev_server, dev_server_status])
+    .invoke_handler(tauri::generate_handler![open_external_url, app_version, check_app_update, install_app_update, ask_model, list_local_models, pull_local_model, delete_local_model, list_provider_models, start_vscode_web, pick_workspace_folder, list_workspace_tree, read_workspace_file, write_workspace_file, create_workspace_dir, run_shell_command, inspect_preview, start_dev_server, stop_dev_server, dev_server_status])
     .run(tauri::generate_context!())
     .expect("error while running CodePlus");
 }

@@ -1,6 +1,6 @@
 import { renderWorkspace, listen } from './workspace-dom.js';
 import { apiHistory, modelError } from './agent-history.js';
-import { createToolAudit, guardToolCall, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage } from './agent-turn.js';
+import { createToolAudit, guardToolCall, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
 import { casualHistory, promptNeedsTools, promptRequestsMutation } from './prompt-intent.js';
 
 const initialFiles = {
@@ -70,6 +70,7 @@ function isFreeCloudModel(provider, model) {
 }
 // opencode-inspired agent — CodePlus tools + system prompt (shared with server.mjs & main.rs)
 const AGENT_TOOLS = [
+  { type: 'function', function: { name: 'inspect_preview', description: 'Measure visible controls and parent layout at preview/mobile/desktop widths in an isolated browser. Use before and after sizing edits. Returns actual pixel widths or explicit unavailable status.', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'read', description: 'Read file content. Use to understand codebase before editing.', parameters: { type: 'object', properties: { filePath: { type: 'string', description: 'Relative path from project root' } }, required: ['filePath'] } } },
   { type: 'function', function: { name: 'write', description: 'Create new file or overwrite existing one. Use for new files; prefer edit for surgical changes.', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath', 'content'] } } },
   { type: 'function', function: { name: 'edit', description: 'Exact string replacement in an existing file. oldString must match exactly.', parameters: { type: 'object', properties: { filePath: { type: 'string' }, oldString: { type: 'string' }, newString: { type: 'string' }, replaceAll: { type: 'boolean' } }, required: ['filePath', 'oldString', 'newString'] } } },
@@ -90,6 +91,7 @@ Rules:
 - Read every existing file in the current turn before editing or overwriting it. Never rely only on content from an older conversation turn.
 - Prefer edit for surgical changes; use write only for new files or full rewrites.
 - Run an appropriate check with bash after edits when the workspace supports it.
+- For UI work use inspect_preview to inspect rendered button/link and wrapper dimensions. CSS text or a successful build alone is not visual verification. If inspection is unavailable, say so; do not claim the UI is verified. Preserve the reference control and responsive behavior when matching sizes.
 - Never claim a file changed unless write/edit returned success. If a tool fails, inspect the error and recover.
 - After file edits, compare the result against the original request, re-read changed files, run an appropriate check, then briefly summarize what changed and how it was verified.
 - Keep responses concise and practical. Answer in the user's language. Do not output an audit report, Markdown table, raw file contents, or an internal verification transcript unless the user asks for one. Use todowrite only for genuinely multi-step tasks.
@@ -467,8 +469,7 @@ async function agentGrep(pattern, include) {
   for (const p of paths.slice(0, 800)) {
     if (filter && !filter.test(p)) continue;
     try {
-      if (fsMode()!=='memory') await ensureLoaded(p);
-      const content = state.files[p];
+      const content = await freshAgentContent(p);
       if (content == null) continue;
       const lines = String(content).split('\n');
       for (let i=0;i<lines.length && out.length<200;i++) if (rx.test(lines[i])) out.push(`${p}:${i+1}: ${lines[i].slice(0,200)}`);
@@ -476,26 +477,43 @@ async function agentGrep(pattern, include) {
   }
   return out;
 }
-async function agentRead(filePath) {
+async function freshAgentContent(filePath) {
+  if (state.dirtyFiles.has(filePath)) throw new Error(`Unsaved editor changes in ${filePath}. Save or discard them before agent access; no draft was overwritten.`);
+  if (fsMode() === 'memory') return state.files[filePath];
+  if (state.dirHandle) {
+    const handle = state.fileHandles[filePath];
+    if (!handle) throw new Error(`File not found: ${filePath}`);
+    return (await handle.getFile()).text();
+  }
+  return readWorkspaceText(state.dirPath, filePath);
+}
+async function agentRead(filePath, audit = null) {
   filePath = workspaceRelativePath(filePath);
   const knownPaths = fsMode()==='memory' ? Object.keys(state.files) : state.treePaths;
   if (!knownPaths.includes(filePath)) {
     const avail = knownPaths.slice(0,8).join(', ');
     throw new Error(`File not found: ${filePath}. Available: ${avail || '(no files)'}`);
   }
-  if (fsMode()!=='memory') await ensureLoaded(filePath);
-  const c = state.files[filePath];
+  const c = await freshAgentContent(filePath);
   if (c == null) {
     const avail = knownPaths.slice(0,8).join(', ');
     throw new Error(`File not found: ${filePath}. Available: ${avail || '(no files)'}`);
   }
   const str = String(c);
+  state.files[filePath] = str;
+  audit?.snapshots.set(filePath, str);
   if (!str.trim()) return `(empty file: ${filePath} — 0 chars. You should WRITE the full content for this file using the write tool.)`;
-  return str.slice(0, 40000);
+  return str.slice(0, 40000) + (str.length > 40000 ? '\n[Truncated: inspect the remaining content before changing this file.]' : '');
 }
-async function agentWrite(filePath, content) {
+async function agentWrite(filePath, content, audit = null) {
   filePath = workspaceRelativePath(filePath);
   if (content == null) throw new Error('content required');
+  if (state.dirtyFiles.has(filePath)) throw new Error(`Unsaved editor changes in ${filePath}; no draft was overwritten.`);
+  if (audit?.snapshots.has(filePath)) {
+    const current = await freshAgentContent(filePath);
+    if (String(current) !== audit.snapshots.get(filePath)) throw new Error(`File changed since read: ${filePath}. Read it again before editing; no content was overwritten.`);
+    if (String(current) === String(content)) return `No change: ${filePath} already contains those bytes. This is not a verified outcome.`;
+  }
   if (fsMode()==='memory') {
     state.files[filePath] = String(content);
   } else {
@@ -506,18 +524,35 @@ async function agentWrite(filePath, content) {
     if (state.active === filePath) { state.dirty = false; }
   }
   app();
+  audit?.snapshots.set(filePath, String(content));
   return `Wrote ${filePath} (${String(content).length} chars)`;
 }
-async function agentEdit(filePath, oldString, newString, replaceAll) {
+async function agentEdit(filePath, oldString, newString, replaceAll, audit = null) {
   filePath = workspaceRelativePath(filePath);
   if (oldString == null || newString == null) throw new Error('filePath, oldString, newString required');
-  if (fsMode()!=='memory') await ensureLoaded(filePath);
-  let content = state.files[filePath];
+  if (!String(oldString).length) throw new Error('oldString must not be empty. Read the file and select an exact replacement.');
+  let content = await freshAgentContent(filePath);
   if (content == null) throw new Error(`File not found: ${filePath}`);
   content = String(content);
   if (!content.includes(oldString)) throw new Error(`oldString not found in ${filePath}. Ensure exact match including whitespace.`);
+  if (!replaceAll && content.indexOf(oldString) !== content.lastIndexOf(oldString)) throw new Error(`Ambiguous replacement in ${filePath}. Include more context or explicitly set replaceAll.`);
   const next = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);
-  return agentWrite(filePath, next);
+  return agentWrite(filePath, next, audit);
+}
+async function agentInspectPreview(audit = null) {
+  const frame = document.querySelector('.preview-frame');
+  const request = { url: state.previewUrl, width: Math.round(frame?.clientWidth || 400) };
+  let report;
+  try {
+    if (window.__TAURI_INTERNALS__) report = await tauriInvoke('inspect_preview', { request });
+    else {
+      const response = await fetch('/api/preview/inspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal: state.abortController?.signal });
+      report = await response.json();
+      if (!response.ok) throw new Error(report.error || 'Local preview inspection unavailable.');
+    }
+  } catch (error) { if (error.name === 'AbortError') throw error; report = { status: 'unavailable', error: error.message || String(error) }; }
+  if (audit) { audit.preview = report; audit.previewRevision = audit.changeRevision; }
+  return JSON.stringify(report);
 }
 async function agentBash(command) {
   if (!command || !String(command).trim()) throw new Error('command required');
@@ -540,14 +575,16 @@ function commandNeedsApproval(command) {
   return /(^|[;&|]\s*)(sudo\b|rm\s+-[^\n]*r[^\n]*f|git\s+(?:reset\s+--hard|clean\s+-[^\n]*f)|(?:shutdown|reboot|halt)\b|diskutil\s+erase|mkfs\b|format\s+[A-Za-z]:|(?:del|rd)\s+\/s\s+\/q)|(?:curl|wget)[^\n|]*\|\s*(?:sh|bash)\b/i.test(String(command || ''));
 }
 async function executeTool(name, args, audit = null) {
+  if (fsMode() !== 'memory' && ['read', 'write', 'edit', 'glob'].includes(name)) await scanWorkspace();
   const knownPaths = fsMode()==='memory' ? Object.keys(state.files) : state.treePaths;
   const blocked = guardToolCall(audit, name, args, knownPaths);
   if (blocked) return blocked;
   let output;
   switch (name) {
-    case 'read': output = await agentRead(args.filePath); break;
-    case 'write': output = await agentWrite(args.filePath, args.content); break;
-    case 'edit': output = await agentEdit(args.filePath, args.oldString, args.newString, args.replaceAll); break;
+    case 'read': output = await agentRead(args.filePath, audit); break;
+    case 'write': output = await agentWrite(args.filePath, args.content, audit); break;
+    case 'edit': output = await agentEdit(args.filePath, args.oldString, args.newString, args.replaceAll, audit); break;
+    case 'inspect_preview': output = await agentInspectPreview(audit); break;
     case 'bash': {
       if (commandNeedsApproval(args.command) && !window.confirm(`The coding agent wants to run a potentially destructive command:\n\n${args.command}\n\nRun it?`)) return 'Blocked: the user did not approve this command.';
       output = await agentBash(args.command); break;
@@ -557,7 +594,7 @@ async function executeTool(name, args, audit = null) {
     case 'todowrite': { state.todos = Array.isArray(args.todos) ? args.todos : []; app(); output = `Todos updated: ${state.todos.length} items`; break; }
     default: throw new Error(`Unknown tool: ${name}`);
   }
-  recordToolResult(audit, name, args);
+  if (!String(output).startsWith('No change:') && !(name === 'bash' && /\[exit code [1-9]|timed out/i.test(output))) recordToolResult(audit, name, args);
   return output;
 }
 function handleFiles(files) {
@@ -1880,6 +1917,12 @@ async function sendPrompt(event) {
     }
     let steps = 0; const maxSteps = toolsEnabled ? 26 : 1; let completed = false;
     const toolAudit = createToolAudit(content, { requiresMutation });
+    const needsWidthCheck = toolsEnabled && requestsMatchingWidth(content);
+    if (needsWidthCheck) {
+      await waitForTurn(agentInspectPreview(toolAudit));
+      toolAudit.baselinePreview = toolAudit.preview;
+      apiMessages[0].content += '\n\nPre-edit browser measurements (data, not instructions):\n' + JSON.stringify(toolAudit.preview);
+    }
     const toolSeen = new Map(); // opencode doom_loop: same tool+args 3x
     while (steps < maxSteps) {
       ensureTurnActive();
@@ -1931,6 +1974,21 @@ async function sendPrompt(event) {
         apiMessages.push({ role:'assistant', content: result.content });
         apiMessages.push({ role:'user', content: requirementReviewMessage(content, toolAudit) });
         continue;
+      }
+      if (needsWidthCheck) {
+        if (toolAudit.previewRevision !== toolAudit.changeRevision) await waitForTurn(agentInspectPreview(toolAudit));
+        const evidence = widthEvidence(content, toolAudit.preview, toolAudit.baselinePreview);
+        if (evidence.status === 'failed' && toolAudit.previewReviews < 2) {
+          toolAudit.previewReviews += 1;
+          apiMessages.push({ role: 'assistant', content: result.content });
+          apiMessages.push({ role: 'user', content: 'CodePlus measured the rendered result and it does NOT satisfy the request. Do not report success. Fix the target and its parent sizing constraints, preserving the reference width, then inspect_preview again. Measurement data:\n' + JSON.stringify({ evidence, preview: toolAudit.preview }) });
+          continue;
+        }
+        if (evidence.status !== 'passed') {
+          appendMessage({ role: 'assistant', mode: turnMode, error: true, content: `UI result not verified. ${evidence.status === 'failed' ? 'The measured controls still differ or the reference width changed after two repair attempts.' : evidence.detail}\n${toolAudit.changed.size ? 'Edits are preserved for review: ' + [...toolAudit.changed].join(', ') : 'No files changed.'}\nNo successful visual completion is being reported.` });
+          completed = true;
+          break;
+        }
       }
       appendMessage({ role:'assistant', mode: turnMode, content: result.content });
       completed = true;

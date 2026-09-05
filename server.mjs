@@ -6,6 +6,7 @@ import { spawn, exec, execSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { inspectPreview } from './scripts/inspect-preview.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4173);
@@ -383,6 +384,7 @@ async function listProviderModels(provider, suppliedKey = '') {
 
 // opencode-inspired agent tools — shared with the client (public/app.js) and Tauri (src-tauri/src/main.rs)
 const AGENT_TOOLS = [
+  { type: 'function', function: { name: 'inspect_preview', description: 'Measure visible buttons/links and parent layout at preview, mobile and desktop widths in an isolated browser. Use before and after UI sizing edits. May be unavailable if no local browser/runtime is installed.', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'read', description: 'Read file content. Use to understand codebase before editing. Handles text files up to 40k chars.', parameters: { type: 'object', properties: { filePath: { type: 'string', description: 'Relative path from project root, e.g. src/app/page.tsx' } }, required: ['filePath'] } } },
   { type: 'function', function: { name: 'write', description: 'Create new file or overwrite existing one. Use for new files; prefer edit for surgical changes.', parameters: { type: 'object', properties: { filePath: { type: 'string', description: 'Relative path from project root' }, content: { type: 'string', description: 'Full file content' } }, required: ['filePath', 'content'] } } },
   { type: 'function', function: { name: 'edit', description: 'Exact string replacement in an existing file. oldString must match exactly including whitespace.', parameters: { type: 'object', properties: { filePath: { type: 'string' }, oldString: { type: 'string', description: 'Exact text to replace' }, newString: { type: 'string', description: 'Replacement text' }, replaceAll: { type: 'boolean', description: 'Replace all occurrences (default false)' } }, required: ['filePath', 'oldString', 'newString'] } } },
@@ -730,6 +732,11 @@ async function githubDownloadSummary() {
 const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.dmg': 'application/x-apple-diskimage', '.exe': 'application/vnd.microsoft.portable-executable', '.msi': 'application/x-msi' };
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.method === 'POST' && req.url === '/api/preview/inspect') {
+      const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+      if (!local || (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host)) return json(res, 403, { error: 'Preview inspection is available only to the local CodePlus server.' });
+      return json(res, 200, await inspectPreview(await body(req)));
+    }
     if (req.method === 'POST' && req.url === '/api/chat') {
       const input = await body(req);
       const result = await askModel(input);

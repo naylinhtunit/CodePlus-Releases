@@ -14,11 +14,13 @@ export function createToolAudit(originalRequest = '', { requiresMutation = false
     verificationRun: false,
     verificationAfterChange: false,
     reviewRequests: 0,
-    actionReviewRequests: 0
+    actionReviewRequests: 0,
+    snapshots: new Map(), preview: null, previewRevision: -1, baselinePreview: null,
+    previewReviews: 0
   };
 }
 
-function requestsMatchingWidth(request) {
+export function requestsMatchingWidth(request) {
   const text = String(request || '');
   return /(?:same|equal|matching?|match)\s+(?:the\s+)?width|width[\s\S]{0,60}(?:same|equal|matching?|match|အတိုင်း|တူ|ညီ)|(?:အတိုင်း|တူ|ညီ)[\s\S]{0,60}width/iu.test(text);
 }
@@ -34,16 +36,38 @@ function preservesWidth(request) {
 
 export function requestContract(request) {
   if (!requestsMatchingWidth(request)) return '';
-  return 'Explicit UI requirement: make the referenced elements the same width. This request permits changing width/flex sizing. Inspect both the component markup and its CSS, implement the relationship, and verify the final files after editing.';
+  return 'Explicit UI requirement: make the referenced elements the same width in the rendered layout while preserving the reference element width. Inspect component markup, parent wrappers, flex/grid constraints, max-width and media queries. Equal CSS width declarations do NOT prove equal rendered widths. Use inspect_preview before editing and after the last edit; fix mismatches at preview, mobile and desktop sizes. Never replace the reference width with an arbitrary fixed value just to make both declarations equal.';
 }
 
 export function toolLoopKey(audit, name, args = {}) {
   // Read/search calls are allowed again after a mutation because they observe a
   // new workspace revision. Mutation calls keep one key so repeated writes are
   // still stopped by the normal doom-loop threshold.
-  const observational = name === 'read' || name === 'glob' || name === 'grep';
+  const observational = name === 'read' || name === 'glob' || name === 'grep' || name === 'inspect_preview';
   const revision = observational ? Number(audit?.changeRevision || 0) : 0;
   return `${revision}:${name}:${JSON.stringify(args || {})}`;
+}
+
+export function widthEvidence(request, report, baseline = null) {
+  if (!report || report.status !== 'measured' || !report.snapshots?.length) return { status: 'unavailable', detail: report?.error || 'No browser measurement available.' };
+  const normalize = text => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const task = normalize(request);
+  const checks = [];
+  let labels;
+  for (const snapshot of report.snapshots) {
+    const elements = snapshot.elements.filter(el => el.label && task.includes(normalize(el.label)));
+    if (elements.length !== 2 || new Set(elements.map(el => normalize(el.label))).size !== 2) return { status: 'unavailable', detail: 'Cannot uniquely identify the two requested controls. Supply their exact visible labels.' };
+    // Request order: target first, reference second. Ambiguous order remains in evidence.
+    elements.sort((a, b) => task.indexOf(normalize(a.label)) - task.indexOf(normalize(b.label)));
+    labels = elements.map(el => el.label);
+    const [target, reference] = elements;
+    if (![target.width, reference.width].every(n => Number.isFinite(n) && n > 0)) return { status: 'unavailable', detail: 'Controls have no measurable width.' };
+    const oldReference = baseline?.snapshots?.find(item => item.viewport === snapshot.viewport)?.elements?.find(el => normalize(el.label) === normalize(reference.label));
+    checks.push({ viewport: snapshot.viewport, target: target.width, reference: reference.width,
+      equal: Math.abs(target.width - reference.width) <= 1,
+      referencePreserved: oldReference ? Math.abs(oldReference.width - reference.width) <= 1 : null });
+  }
+  return { status: checks.every(c => c.equal && c.referencePreserved !== false) ? 'passed' : 'failed', labels, checks };
 }
 
 export function normalizeToolName(name) {

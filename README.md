@@ -1,5 +1,15 @@
 # CodePlus
 
+### v0.1.22 — Fresh file access and measured UI checks
+
+Web and desktop agents now read current disk contents instead of the editor cache. Unsaved editor drafts, files changed since the agent read them, and ambiguous string replacements are protected. No-op writes no longer count as successful changes.
+
+The new `inspect_preview` tool measures visible buttons/links and their parent layout in an isolated Chrome/Edge profile at the preview width, 375px and 1280px. Same-width requests are checked against these measurements before completion, with at most two repair reviews; a mismatch or unavailable measurement is reported honestly instead of passing the model's unsupported success claim through. Matching labels must uniquely identify two visible controls. This is targeted layout verification, not proof that every possible UI behavior is correct.
+
+Preview inspection requires **Node.js 22+**, **Google Chrome or Microsoft Edge**, and a running HTTP localhost dev server on port 1024 or higher. It does not use your signed-in browser profile or reload the embedded preview. Measurements use Chromium, not the macOS embedded WebView. Hosted web instances cannot inspect a user's localhost; use the local web server or desktop app for this feature. The inspector does not automatically install software or start a project server.
+
+Validation: `npm test`, `cargo test --manifest-path src-tauri/Cargo.toml`, and optional real-browser regression `CODEPLUS_BROWSER_TEST=1 node --test tests/preview-inspection.test.mjs`.
+
 ### v0.1.21 — Signed desktop updates and public release source
 
 macOS နှင့် Windows in-app update အတွက် မူရင်း updater signing key ကို public release workflow တွင်ပြန်ချိတ်ဆက်ထားပါသည်။ Update icon ကိုနှိပ်လျှင် signed bundle ကို download/install လုပ်ပြီး app ကို restart/reopen လုပ်ပါသည်။ Release တစ်ခုချင်းစီတွင် installer များ၊ verified updater signatures၊ `latest.json` နှင့် matching app source ZIP ပါဝင်ပါသည်။
