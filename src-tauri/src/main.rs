@@ -924,7 +924,7 @@ async fn model_response(response: reqwest::Response, provider: &str) -> Result<V
 
 #[tauri::command]
 async fn ask_model(request: ChatRequest) -> Result<AskResponse, String> {
-  let client = Client::new();
+  let client = Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
   let tools_enabled = request.tools_enabled.unwrap_or(true);
   let require_tool = tools_enabled && request.require_tool.unwrap_or(false);
   let messages = with_context(request.messages, &request.context);
@@ -936,7 +936,9 @@ async fn ask_model(request: ChatRequest) -> Result<AskResponse, String> {
     let mut tool_recovery_retries = 0;
     loop {
       let response = client.post(format!("{}/api/chat", endpoint.trim_end_matches('/')))
-        .json(&body).send().await.map_err(network_error)?;
+        .json(&body).send().await.map_err(|error| if error.is_timeout() {
+          "Ollama did not respond within 120 seconds. CodePlus stopped this model step so the agent cannot remain stuck. Try a new chat, a smaller context, or another local coding model.".to_string()
+        } else { network_error(error) })?;
       let status = response.status();
       let data: Value = response.json().await.map_err(network_error)?;
       if !status.is_success() {

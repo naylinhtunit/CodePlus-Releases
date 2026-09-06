@@ -39,6 +39,22 @@ test('agent completion keeps a compact summary, duration and audited edited file
   assert.equal(message.completion, true);
 });
 
+test('agent stops after a model repeats the same tool call three times', async () => {
+  const f = fixture(false);
+  f.sandbox.document.querySelector = selector => selector === '#prompt' ? { value: 'Read the file and update it' } : null;
+  vm.runInContext(`
+    persistChatHistory = () => {};
+    state.provider = 'local'; state.model = 'qwen2.5-coder:7b'; state.messages = [];
+    let calls = 0;
+    callModel = async () => { calls++; return { content: '', tool_calls: [{ name: 'read', arguments: { filePath: 'page.tsx' } }] }; };
+    this.modelCalls = () => calls;
+  `, f.sandbox);
+  await f.sendPrompt({ preventDefault() {} });
+  assert.equal(f.sandbox.modelCalls(), 3);
+  assert.match(f.state.messages.at(-1).content, /stopped the stalled agent loop/);
+  assert.equal(f.state.sending, false);
+});
+
 for (const desktop of [false, true]) {
   test(`${desktop ? 'desktop' : 'web'}: a false model success is withheld after measured mismatch and bounded repairs`, async () => {
     const f = fixture(desktop);

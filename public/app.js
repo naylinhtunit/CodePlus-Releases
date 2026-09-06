@@ -1,6 +1,6 @@
 import { renderWorkspace, listen } from './workspace-dom.js';
 import { apiHistory, modelError } from './agent-history.js';
-import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
+import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolCall, needsActionReview, actionReviewMessage, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
 import { casualHistory, promptNeedsTools, promptRequestsMutation } from './prompt-intent.js';
 
 const initialFiles = {
@@ -159,7 +159,7 @@ const state = {
   apiKey: loadSavedKey(_savedProvider), draftProvider: 'local', localModels: [], localModelsLoaded: false, localModelsLoading: false, localModelsError: '', pullProgress: {}, removingModel: '',
   keyDrafts: {}, keyEditing: {}, keyRemoveConfirm: '', modelDeleteConfirm: null,
   cloudModels: Object.fromEntries(PROVIDERS.filter(item=>item.group==='Cloud').map(item=>[item.id, structuredClone(item.models || [])])), cloudModelsLoaded: {}, cloudModelLoading: {}, cloudModelError: {},
-  messages: [], chatHistoryKey: '', editingMessageId: '', copiedMessageId: '', sending: false, turnProvider: null, stopRequested: false, abortController: null, stopPromise: null, stopReject: null, settingsOpen: false, modelPickerOpen: false, dirty: false, dirtyFiles: new Set(), vscodeNote: '', vscodeConsent: false, vscodeView: false, vscodeUrl: '',
+  messages: [], chatHistoryKey: '', editingMessageId: '', copiedMessageId: '', sending: false, modelWaiting: false, turnProvider: null, stopRequested: false, abortController: null, stopPromise: null, stopReject: null, settingsOpen: false, modelPickerOpen: false, dirty: false, dirtyFiles: new Set(), vscodeNote: '', vscodeConsent: false, vscodeView: false, vscodeUrl: '',
   folders: {}, previewUrl: localStorage.getItem('codeplus-preview-url') || 'http://localhost:3000', customPreview: Boolean(localStorage.getItem('codeplus-preview-url')),
   projectName: localStorage.getItem('codeplus-project-name') || 'CodePlus', projects: [], activeProjectId: '', expandedProjects: {}, workspacesOpen: false, newFileOpen: false, previewHidden: false, editorClosed: false, filesHidden: localStorage.getItem('codeplus-files-hidden') === 'true', downloadOpen: false,
   dirHandle: null, dirPath: '', treePaths: [], fileHandles: {}, loading: new Set(),
@@ -457,7 +457,7 @@ function messages() {
     const actions = copyAction || editAction ? `<div class="message-actions">${copyAction}${editAction}</div>` : '';
     const editedNote = m.editedFrom ? '<span class="edited-note">Edited copy</span>' : '';
     return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${images}${m.content?.trim() ? toolCalls : ''}</div>`;
-  }).join('') + (state.todos.length ? `<div class="message todos"><span class="role">Todos</span>${state.todos.map(t=>`<div class="todo ${t.status}"><span>${t.status==='completed'?'✓':t.status==='in_progress'?'◉':'○'} ${escape(t.content)}</span><span class="prio">${escape(t.priority||'')}</span></div>`).join('')}</div>` : '');
+  }).join('') + (state.modelWaiting ? `<div class="message tool running model-waiting"><div class="tool-running-row"><span class="tool-spinner" aria-hidden="true"></span><span class="tool-label">Waiting for ${escape(compactModelName(state.turnProvider?.model || state.model, '', 28))}</span><span class="tool-status">${state.turnProvider?.provider === 'local' ? 'Up to 2 min' : 'Working'}</span></div></div>` : '') + (state.todos.length ? `<div class="message todos"><span class="role">Todos</span>${state.todos.map(t=>`<div class="todo ${t.status}"><span>${t.status==='completed'?'✓':t.status==='in_progress'?'◉':'○'} ${escape(t.content)}</span><span class="prio">${escape(t.priority||'')}</span></div>`).join('')}</div>` : '');
 }
 function compactModelName(id, name = '', max = 38) {
   const modelId = String(id || '').trim();
@@ -2178,7 +2178,7 @@ async function sendPrompt(event) {
       if (contract) apiMessages[0].content += `\n\n${contract}`;
       if (requiresMutation) apiMessages[0].content += '\n\nThis turn requires an actual workspace change. Inspect the real files and use edit/write; do not return tutorial or sample code.';
     }
-    let steps = 0; const maxSteps = toolsEnabled ? 26 : 1; let completed = false;
+    let steps = 0; const maxSteps = toolsEnabled ? (state.turnProvider.provider === 'local' ? 12 : 26) : 1; let completed = false;
     const toolAudit = createToolAudit(content, { requiresMutation });
     const needsWidthCheck = toolsEnabled && requestsMatchingWidth(content);
     if (needsWidthCheck) {
@@ -2191,12 +2191,14 @@ async function sendPrompt(event) {
       ensureTurnActive();
       steps++;
       const requireTool = requiresMutation && !toolAudit.explored && toolAudit.changed.size === 0;
-      const result = await callModel(apiMessages, context, requireTool);
+      state.modelWaiting = true; app();
+      let result;
+      try { result = await callModel(apiMessages, context, requireTool); }
+      finally { state.modelWaiting = false; app(); }
       ensureTurnActive();
       const toolCalls = Array.isArray(result.tool_calls) ? result.tool_calls.filter(call => call && call.name).map((call, index) => ({
         id: call.id || `call_${steps}_${index}_${Date.now().toString(36)}`,
-        name: normalizeToolName(call.name),
-        arguments: call.arguments && typeof call.arguments === 'object' ? call.arguments : {},
+        ...normalizeToolCall(call),
         ...(call.thought_signature ? { thought_signature: call.thought_signature } : {})
       })) : [];
       const hasTools = toolCalls.length > 0;
@@ -2213,7 +2215,7 @@ async function sendPrompt(event) {
           toolSeen.set(key, cnt);
           let output = '';
           if (cnt >= 3) {
-            output = `Doom loop detected: You have already called ${tc.name} with the same arguments ${cnt} times. Stop repeating. For read: use the cached content you already have. For write/edit: you have already written — summarize the changes and stop.`;
+            throw new Error(`The model repeated ${tc.name} with the same arguments three times, so CodePlus stopped the stalled agent loop. No additional tool was run. Try a more capable coding model or start a new chat with a shorter request.`);
           } else {
             try { output = await waitForTurn(executeTool(tc.name, tc.arguments || {}, toolAudit)); } catch (e) { if (e.name === 'AbortError') throw e; output = `Error: ${e.message || String(e)}`; }
           }
@@ -2262,7 +2264,7 @@ async function sendPrompt(event) {
     if (state.stopRequested || error?.name === 'AbortError') appendMessage({role:'assistant',content:'Stopped.',stopped:true});
     else appendMessage({role:'assistant',content: modelError(error, [state.turnProvider?.apiKey, state.apiKey]),error:true});
   } finally {
-    state.sending=false; state.turnProvider=null; state.stopRequested=false; state.abortController=null; state.stopPromise=null; state.stopReject=null; app();
+    state.sending=false; state.modelWaiting=false; state.turnProvider=null; state.stopRequested=false; state.abortController=null; state.stopPromise=null; state.stopReject=null; app();
     persistChatHistory();
     // refresh file tree if edits happened
     if (fsMode()!=='memory' && state.treePaths.length) { try { await scanWorkspace(); app(); } catch {} }

@@ -1,6 +1,6 @@
 {
   "name": "codeplus",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "type": "module",
   "description": "A local-first, multi-model AI workspace for the browser, macOS, and Windows.",

@@ -268,7 +268,8 @@ function textFromOpenAI(data) {
 async function ollamaFetch(url, options) {
   try {
     return await fetch(url, options);
-  } catch {
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw new Error('Ollama did not respond within 120 seconds. CodePlus stopped this model step so the agent cannot remain stuck. Try a new chat, a smaller context, or another local coding model.');
     throw new Error(`Could not connect to Ollama at ${new URL(url).origin}. Start the Ollama app or run "ollama serve" first.`);
   }
 }
@@ -625,7 +626,7 @@ async function askModel({ provider, model, messages, localUrl, apiKey, context, 
     let emptyRetries = 0;
     let toolRecoveryRetries = 0;
     while (true) {
-      const response = await ollamaFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const response = await ollamaFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) });
       const data = await response.json();
       if (!response.ok) {
         if (body.tools && /not support tools/i.test(String(data.error))) {

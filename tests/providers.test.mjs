@@ -22,6 +22,15 @@ test('every new turn preserves prior tool activity as context but never sends st
   assert.match(same[1].content, /Previous tool activity \(context only/);
 });
 
+test('local model history is bounded while retaining the latest request', () => {
+  const messages = Array.from({ length: 20 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `${index}:` + 'x'.repeat(2000) }));
+  messages.push({ role: 'user', content: 'LATEST LOCAL REQUEST' });
+  const result = apiHistory(messages, 'local', 'qwen2.5-coder:7b');
+  assert.ok(result.reduce((sum, message) => sum + message.content.length, 0) <= 12_000);
+  assert.match(result.at(-1).content, /LATEST LOCAL REQUEST/);
+  assert.ok(result.length < messages.length);
+});
+
 test('native string and object errors show useful details without keys', () => {
   assert.match(modelError('Gemini HTTP 429: quota exhausted'), /429.*quota/);
   assert.match(modelError('OpenAI HTTP 429: You have no credits remaining.'), /paid OpenAI API model/);

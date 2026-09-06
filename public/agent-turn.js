@@ -75,6 +75,16 @@ export function normalizeToolName(name) {
   return ({ search: 'grep', shell: 'bash', run: 'bash', list_files: 'glob' })[clean] || clean;
 }
 
+export function normalizeToolCall(call = {}) {
+  let name = normalizeToolName(call.name);
+  let args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+  if (name === 'tool_call' && typeof args.name === 'string') {
+    name = normalizeToolName(args.name);
+    args = args.arguments && typeof args.arguments === 'object' ? args.arguments : {};
+  }
+  return { name, arguments: args };
+}
+
 function widthDeclarations(value) {
   return [...String(value || '').matchAll(/(?:^|[;{\s-])((?:min-|max-)?width)\s*:\s*([^;}]+)/giu)]
     .map(match => `${match[1].toLowerCase()}:${match[2].replace(/\s+/g, ' ').trim()}`);

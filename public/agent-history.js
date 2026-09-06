@@ -23,7 +23,23 @@ export function apiHistory(messages, provider, model) {
       result.push({ role: message.role, content });
     }
   }
-  return result;
+  if (provider !== 'local') return result;
+
+  // Keep small local models responsive by bounding old conversation and tool
+  // summaries. Live tool results from the current turn are appended separately.
+  const budget = 12_000;
+  const compact = [];
+  let used = 0;
+  for (let i = result.length - 1; i >= 0; i--) {
+    const message = result[i];
+    const remaining = budget - used;
+    if (remaining <= 0) break;
+    const content = String(message.content || '');
+    const keep = content.length <= remaining ? content : content.slice(-remaining);
+    compact.unshift({ ...message, content: keep });
+    used += keep.length;
+  }
+  return compact;
 }
 
 export function modelError(error, secrets = []) {

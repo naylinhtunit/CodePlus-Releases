@@ -1,5 +1,11 @@
 # CodePlus
 
+### v0.1.29 — Bounded and responsive Ollama agent runs
+
+Ollama local model များအတွက် conversation/tool history အဟောင်းကို 12,000 characters အတွင်း အလိုအလျောက်ချုံ့ထားပြီး current turn tool results ကိုသာ အပြည့်အစုံအသုံးပြုပါသည်။ တူညီသော tool call ကို သုံးကြိမ်ဆက်တိုက်ပြန်ခေါ်လျှင် 26-step loop ဆက်မလည်တော့ဘဲ အကြောင်းရင်းရှင်းလင်းစွာပြပြီး ရပ်ပါသည်။ Local agent အများဆုံး 12 steps သာလုပ်ပြီး Ollama inference တစ်ကြိမ်သည် 120 seconds အတွင်း response မရလျှင် timeout ဖြင့်ရပ်ပါသည်။
+
+Local model အချို့က real tool call ကို generic `tool_call` အတွင်းထည့်ပို့သော format ကိုလည်း unwrap လုပ်ပေးပါသည်။ Model response ကိုစောင့်နေချိန်တွင် selected model name နှင့် local step အတွက် နှစ်မိနစ်အများဆုံးဖြစ်ကြောင်း chat list မှာပြပါသည်။ Web, macOS နှင့် Windows တို့တွင် shared agent behavior တူညီပါသည်။
+
 ### v0.1.27 — Local-agent recovery and stable desktop launch
 
 Ollama local model က malformed native tool-call JSON ပြန်ပေးလျှင် error ဖြင့်ချက်ချင်းရပ်မသွားတော့ပါ။ CodePlus က မပြည့်စုံသော call ကို မ execute ဘဲ safe text-tool protocol သို့ တစ်ကြိမ်ပြောင်းပြီး valid call ကို bounded retry လုပ်ပါသည်။ Existing file ကို မဖတ်ဘဲ edit/write တောင်းလာလျှင်လည်း `Blocked` loop မဖြစ်စေရန် CodePlus က current file ကို အလိုအလျောက်ဖတ်ပေးပြီး model အား precise mutation call ပြန်ပို့ခိုင်းပါသည်။ Preserve constraints နှင့် incomplete JSON protection များကို ဆက်ထိန်းထားပါသည်။

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, needsActionReview, actionReviewMessage } from '../public/agent-turn.js';
+import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolName, normalizeToolCall, needsActionReview, actionReviewMessage } from '../public/agent-turn.js';
 
 test('agent quality gate requires a current-turn read before existing-file mutations', () => {
   const audit = createToolAudit();
@@ -78,6 +78,12 @@ test('common local-model tool synonyms normalize to CodePlus tools', () => {
   assert.equal(normalizeToolName('run'), 'bash');
   assert.equal(normalizeToolName('list_files'), 'glob');
   assert.equal(normalizeToolName('EDIT'), 'edit');
+});
+
+test('generic local-model tool_call wrappers unwrap to the requested tool', () => {
+  assert.deepEqual(normalizeToolCall({ name: 'tool_call', arguments: { name: 'edit', arguments: { filePath: 'a.css', oldString: 'a', newString: 'b' } } }), {
+    name: 'edit', arguments: { filePath: 'a.css', oldString: 'a', newString: 'b' }
+  });
 });
 
 test('action gate rejects tutorial answers until a requested workspace change is grounded', () => {
