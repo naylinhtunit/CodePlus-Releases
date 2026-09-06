@@ -942,6 +942,8 @@ async fn ask_model(request: ChatRequest) -> Result<AskResponse, String> {
       if !status.is_success() {
         let error = data["error"].as_str().unwrap_or("Local model request failed");
         if body.get("tools").is_some() && error.to_ascii_lowercase().contains("not support tools") {
+          let schema = body["tools"].to_string();
+          body["messages"].as_array_mut().unwrap().push(json!({"role":"system","content":format!("Use the text tool protocol for workspace operations: <tool_call>{{\"name\":\"read\",\"arguments\":{{\"filePath\":\"README.md\"}}}}</tool_call>. Available tool schemas: {schema}")}));
           body.as_object_mut().unwrap().remove("tools"); continue;
         }
         if tools_enabled && tool_recovery_retries < 1 && is_ollama_tool_protocol_error(error) {
@@ -971,6 +973,10 @@ async fn ask_model(request: ChatRequest) -> Result<AskResponse, String> {
       }
       if empty_retries == 0 {
         empty_retries += 1;
+        if data["done_reason"] == "length" {
+          if body["think"].is_string() { body["think"] = json!("low"); }
+          body["options"]["num_predict"] = json!(16384);
+        }
         body["messages"].as_array_mut().unwrap().push(json!({"role":"user","content":"Return a final answer or a tool call for the pending request. Do not repeat tools already completed."}));
         continue;
       }

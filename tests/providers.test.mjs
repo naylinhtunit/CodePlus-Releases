@@ -103,6 +103,20 @@ test('Ollama tools-unsupported fallback keeps thinking mode and has bounded empt
   const api = providerFixture(async (_url, options) => { const body = JSON.parse(options.body); bodies.push(body); return body.tools ? reply({ error: 'model does not support tools' }, 400) : reply({ message: { content: 'Hello' } }); });
   await api.askModel({ provider: 'local', model: 'gpt-oss:20b', messages: [] });
   assert.equal(bodies.length, 2); assert.equal(bodies[1].think, 'medium'); assert.ok(!bodies[1].tools);
+  assert.match(bodies[1].messages.at(-1).content, /Available tool schemas:/);
+});
+
+test('Ollama length recovery reduces thinking and increases output budget once', async () => {
+  const bodies = [];
+  const api = providerFixture(async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return bodies.length === 1 ? reply({ message: { content: '' }, done_reason: 'length' }) : reply({ message: { content: 'Recovered' } });
+  });
+  const result = await api.askModel({ provider: 'local', model: 'gpt-oss:20b', messages: [] });
+  assert.equal(result.content, 'Recovered');
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[1].think, 'low');
+  assert.equal(bodies[1].options.num_predict, 16384);
 });
 
 test('Ollama repairs one malformed native tool call through the safe text protocol', async () => {

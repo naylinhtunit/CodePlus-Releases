@@ -628,7 +628,10 @@ async function askModel({ provider, model, messages, localUrl, apiKey, context, 
       const response = await ollamaFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok) {
-        if (body.tools && /not support tools/i.test(String(data.error))) { delete body.tools; continue; }
+        if (body.tools && /not support tools/i.test(String(data.error))) {
+          body.messages.push({ role: 'system', content: `Use the text tool protocol for workspace operations: <tool_call>{"name":"read","arguments":{"filePath":"README.md"}}</tool_call>. Available tool schemas: ${JSON.stringify(body.tools)}` });
+          delete body.tools; continue;
+        }
         if (toolsEnabled && toolRecoveryRetries < 1 && isOllamaToolProtocolError(data.error)) {
           toolRecoveryRetries++;
           delete body.tools;
@@ -655,6 +658,10 @@ async function askModel({ provider, model, messages, localUrl, apiKey, context, 
       }
       if (result) return result;
       if (emptyRetries++ === 0) {
+        if (data.done_reason === 'length') {
+          if (typeof body.think === 'string') body.think = 'low';
+          body.options.num_predict = 16384;
+        }
         body.messages.push({ role: 'user', content: 'Return a final answer or a tool call for the pending request. Do not repeat tools already completed.' });
         continue;
       }
