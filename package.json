@@ -1,0 +1,23 @@
+{
+  "name": "codeplus-desktop",
+  "version": "0.1.33",
+  "private": true,
+  "type": "module",
+  "description": "CodePlus desktop application source and release pipeline.",
+  "scripts": {
+    "test": "node scripts/verify-desktop-source.mjs",
+    "desktop:prepare": "node scripts/verify-desktop-source.mjs",
+    "desktop:build": "tauri build",
+    "desktop:build:mac": "tauri build --bundles app,dmg",
+    "desktop:build:windows": "tauri build --bundles msi,nsis",
+    "desktop:build:windows:cross": "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis",
+    "desktop:updater-manifest": "node scripts/create-updater-manifest.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "jsdom": "^30.0.1"
+  }
+}
