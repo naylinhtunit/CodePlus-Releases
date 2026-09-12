@@ -4,6 +4,7 @@ const requiredFiles = [
   '.desktop-dist/index.html',
   '.desktop-dist/app.js',
   '.desktop-dist/styles.css',
+  'scripts/inspect-preview.mjs',
   'src-tauri/Cargo.toml',
   'src-tauri/src/main.rs',
   'src-tauri/tauri.conf.json'
