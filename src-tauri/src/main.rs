@@ -590,16 +590,10 @@ fn runtime_port(runtime: &ProjectRuntime) -> u16 {
   reqwest::Url::parse(&runtime.url).ok().and_then(|url| url.port_or_known_default()).unwrap_or(3000)
 }
 
-fn command_available(command: &str) -> bool {
-  if command.is_empty() || !command.chars().all(|ch| ch.is_ascii_alphanumeric() || "._+-".contains(ch)) { return false; }
-  #[cfg(unix)] { return Command::new("sh").args(["-c", &format!("command -v {command}")]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false); }
-  #[cfg(windows)] { return Command::new("where").arg(command).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false); }
-}
-
 fn project_path_env(abs: &std::path::Path) -> Option<std::ffi::OsString> {
   let venv = if cfg!(windows) { abs.join(".venv").join("Scripts") } else { abs.join(".venv").join("bin") };
   let mut paths = vec![venv];
-  if let Some(current) = std::env::var_os("PATH") { paths.extend(std::env::split_paths(&current)); }
+  paths.extend(std::env::split_paths(&runtime::environment_path()));
   std::env::join_paths(paths).ok()
 }
 
@@ -667,7 +661,7 @@ async fn start_dev_server(root: String) -> Result<String, String> {
   }
   // adopt a dev server that is already listening on the project port
   if probe_port(&client, port).await { return Ok(url); }
-  let missing: Vec<String> = runtime.prerequisites.iter().filter(|(command,_,_)| !command_available(command)).map(|(_,label,hint)| format!("{label}: {hint}")).collect();
+  let missing: Vec<String> = runtime.prerequisites.iter().filter(|(command,_,_)| !runtime::command_available(command)).map(|(_,label,hint)| format!("{label}: {hint}")).collect();
   if !missing.is_empty() { return Err(format!("{} prerequisites are missing.\n{}\nAfter installing them, restart CodePlus or retry Start dev server.", runtime.technology, missing.join("\n"))); }
   let needs_setup = !runtime.setup.is_empty() && !prepared_projects().lock().map_err(|_| "Setup state lock failed".to_string())?.contains(&root);
   if needs_setup {

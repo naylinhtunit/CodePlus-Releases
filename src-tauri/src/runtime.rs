@@ -1,4 +1,4 @@
-use std::{env, ffi::OsString, path::{Path, PathBuf}, process::Command};
+use std::{env, ffi::OsString, path::{Path, PathBuf}, process::{Command, Stdio}};
 
 // Finder/Start-menu launches do not inherit a terminal's Node/version-manager PATH.
 // Keep existing entries first, then add only existing, user-owned install locations.
@@ -44,6 +44,14 @@ fn supplemented_path(inherited: OsString, home: Option<PathBuf>) -> OsString {
   env::join_paths(paths).unwrap_or(inherited)
 }
 
+/// Return the same executable search path for every command launched by CodePlus.
+/// GUI apps on macOS and Windows often do not inherit the PATH configured by the
+/// user's terminal, so runtime checks and spawned project commands must share this.
+pub fn environment_path() -> OsString {
+  let home = env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+  supplemented_path(env::var_os("PATH").unwrap_or_default(), home)
+}
+
 pub fn shell_command(command: &str) -> Command {
   let mut process = if cfg!(windows) {
     let mut cmd = Command::new(env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
@@ -51,9 +59,14 @@ pub fn shell_command(command: &str) -> Command {
   } else {
     let mut cmd = Command::new("/bin/sh"); cmd.arg("-c").arg(command); cmd
   };
-  let home = env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
-  process.env("PATH", supplemented_path(env::var_os("PATH").unwrap_or_default(), home));
+  process.env("PATH", environment_path());
   process
+}
+
+pub fn command_available(command: &str) -> bool {
+  if command.is_empty() || !command.chars().all(|ch| ch.is_ascii_alphanumeric() || "._+-".contains(ch)) { return false; }
+  let lookup = if cfg!(windows) { format!("where {command}") } else { format!("command -v {command}") };
+  shell_command(&lookup).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|status| status.success()).unwrap_or(false)
 }
 
 pub fn missing_node_hint(stderr: &str) -> &'static str {
@@ -82,6 +95,9 @@ mod tests {
     let out = shell_command("node --version && npm --version").output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(String::from_utf8_lossy(&out.stdout).contains('v'));
+    assert!(command_available("node"));
+    assert!(command_available("npm"));
+    assert!(!command_available("npm; echo unsafe"));
   }
   #[test]
   fn explains_missing_runtime_on_both_platforms() {

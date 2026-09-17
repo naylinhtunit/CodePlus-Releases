@@ -2987,7 +2987,7 @@ async function tryAutoStartDevServer() {
       setTimeout(() => { const f = document.querySelector('.preview-frame'); if (f) f.src = state.previewUrl; }, 3500);
     } catch (e) {
       state.devStarting = false; state.devRunning = false;
-      state.previewUrl = 'http://localhost:3000/';
+      state.previewUrl = previewRuntime()?.url || state.previewUrl || 'http://localhost:3000/';
       state.customPreview = true;
       localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
       localStorage.setItem(projectValueKey('custom-preview'), 'true');
