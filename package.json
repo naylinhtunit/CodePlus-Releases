@@ -1,6 +1,6 @@
 {
   "name": "codeplus-desktop",
-  "version": "0.1.33",
+  "version": "0.1.34",
   "private": true,
   "type": "module",
   "description": "CodePlus desktop application source and release pipeline.",

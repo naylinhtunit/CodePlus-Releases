@@ -1,6 +1,6 @@
 import { renderWorkspace, listen } from './workspace-dom.js';
 import { apiHistory, modelError } from './agent-history.js';
-import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolCall, needsActionReview, actionReviewMessage, projectInstructionContext, projectInstructionPaths, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
+import { createToolAudit, guardToolCall, mutationReadPrerequisite, recordToolResult, needsRequirementReview, requirementReviewMessage, requestContract, toolLoopKey, normalizeToolCall, needsActionReview, actionReviewMessage, projectInstructionContext, projectInstructionPaths, parseSkillManifest, projectSkillPaths, skillCatalogContext, explicitlyRequestedSkills, projectRulePaths, parseCommandRules, commandRuleDecision, requestsMatchingWidth, widthEvidence } from './agent-turn.js';
 import { casualHistory, capabilityReply, chatSystemPrompt, isCapabilityQuestion, promptNeedsTools, promptRequestsMutation } from './prompt-intent.js';
 
 const initialFiles = {
@@ -87,7 +87,113 @@ function projectSlug(name) {
 function projectStarterProfile(name) {
   return PROJECT_STARTER_PROFILES.find(profile => profile.match.test(String(name || ''))) || DEFAULT_PROJECT_STARTER_PROFILE;
 }
-function createProjectStarter(name) {
+const TECHNOLOGY_BRANDS = {
+  nextjs:['N','#f5f5f5'], react:['⚛','#61dafb'], static:['</>','#e34f26'], vue:['V','#42b883'], nuxt:['N','#00dc82'], angular:['A','#dd0031'], svelte:['S','#ff3e00'], sveltekit:['SK','#ff3e00'], astro:['A','#ff5d01'], remix:['R','#e8edf8'], solid:['S','#2c4f7c'], qwik:['Q','#18b6f6'], preact:['P','#673ab8'], lit:['L','#324fff'], alpine:['A','#77c1d2'], htmx:['HX','#3366cc'], tailwind:['TW','#38bdf8'],
+  express:['EX','#f0f0f0'], fastapi:['FA','#009688'], nestjs:['NS','#e0234e'], fastify:['FY','#f5f5f5'], hono:['H','#ff5b11'], koa:['K','#c8d2e6'], bun:['B','#fbf0df'], deno:['D','#e8edf8'], django:['DJ','#44b78b'], flask:['F','#f5f5f5'], streamlit:['ST','#ff4b4b'], gradio:['GR','#ff7c00'], gin:['GI','#00acd7'], axum:['AX','#dea584'], spring:['SP','#6db33f'], ktor:['KT','#a97bff'], aspnet:['.N','#512bd4'], laravel:['L','#ff2d20'], rails:['RB','#cc0000'], phoenix:['PX','#f05423'],
+  'react-native':['RN','#61dafb'], expo:['E','#e8edf8'], flutter:['FL','#54c5f8'], swiftui:['SW','#f05138'], android:['AN','#3ddc84'], electron:['EL','#9feaf9'], tauri:['TA','#ffc131'],
+  postgresql:['PG','#4169e1'], supabase:['SB','#3ecf8e'], firebase:['FB','#ffca28'], mongodb:['MO','#47a248'], prisma:['PR','#5a67d8'], drizzle:['DR','#c5f74f'], sqlite:['SQ','#44a2d2'],
+  typescript:['TS','#3178c6'], javascript:['JS','#f7df1e'], python:['PY','#3776ab'], go:['GO','#00add8'], rust:['RS','#dea584'], java:['JV','#ed8b00'], kotlin:['KT','#a97bff'], csharp:['C#','#512bd4'], cpp:['C++','#659ad2'], c:['C','#a8b9cc'], swift:['SW','#f05138'], dart:['DA','#0175c2'], php:['PHP','#777bb4'], ruby:['RB','#cc342d'], elixir:['EX','#6e4a7e'], scala:['SC','#dc322f'], r:['R','#276dc3'], julia:['JL','#9558b2'], lua:['LU','#000080'], bash:['SH','#4eaa25'], powershell:['PS','#5391fe'], solidity:['SO','#8b8b8b'], zig:['ZG','#f7a41d']
+};
+const PROJECT_TECHNOLOGIES = [
+  { id:'nextjs', group:'Web frameworks', label:'Next.js', detail:'TypeScript · Full stack', entry:'src/app/page.tsx', icon:'next' },
+  { id:'react', group:'Web frameworks', label:'React + Vite', detail:'TypeScript · Frontend', entry:'src/App.tsx', icon:'react' },
+  { id:'static', group:'Web frameworks', label:'HTML / CSS / JavaScript', detail:'JavaScript · Static web', entry:'index.html', icon:'web' },
+  { id:'vue', group:'Web frameworks', label:'Vue', detail:'JavaScript · Frontend', entry:'src/App.vue', icon:'web' },
+  { id:'nuxt', group:'Web frameworks', label:'Nuxt', detail:'Vue · Full stack', entry:'app.vue', icon:'web' },
+  { id:'angular', group:'Web frameworks', label:'Angular', detail:'TypeScript · Frontend', entry:'src/app/app.component.ts', icon:'web' },
+  { id:'svelte', group:'Web frameworks', label:'Svelte', detail:'JavaScript · Frontend', entry:'src/App.svelte', icon:'web' },
+  { id:'sveltekit', group:'Web frameworks', label:'SvelteKit', detail:'TypeScript · Full stack', entry:'src/routes/+page.svelte', icon:'web' },
+  { id:'astro', group:'Web frameworks', label:'Astro', detail:'Content-focused web', entry:'src/pages/index.astro', icon:'web' },
+  { id:'remix', group:'Web frameworks', label:'Remix', detail:'TypeScript · Full stack', entry:'app/routes/_index.tsx', icon:'react' },
+  { id:'solid', group:'Web frameworks', label:'SolidJS', detail:'TypeScript · Frontend', entry:'src/App.tsx', icon:'web' },
+  { id:'qwik', group:'Web frameworks', label:'Qwik', detail:'TypeScript · Web app', entry:'src/routes/index.tsx', icon:'web' },
+  { id:'preact', group:'Web frameworks', label:'Preact', detail:'JavaScript · Frontend', entry:'src/app.jsx', icon:'react' },
+  { id:'lit', group:'Web frameworks', label:'Lit', detail:'Web components', entry:'src/main.ts', icon:'web' },
+  { id:'alpine', group:'Web frameworks', label:'Alpine.js', detail:'JavaScript · Lightweight UI', entry:'index.html', icon:'web' },
+  { id:'htmx', group:'Web frameworks', label:'HTMX', detail:'HTML-driven web', entry:'index.html', icon:'web' },
+  { id:'tailwind', group:'Web frameworks', label:'Tailwind CSS', detail:'CSS · Utility-first UI', entry:'index.html', icon:'web' },
+
+  { id:'express', group:'Backend & APIs', label:'Node.js + Express', detail:'JavaScript · Backend', entry:'src/server.js', icon:'server' },
+  { id:'fastapi', group:'Backend & APIs', label:'Python + FastAPI', detail:'Python · API', entry:'app/main.py', icon:'python' },
+  { id:'nestjs', group:'Backend & APIs', label:'NestJS', detail:'TypeScript · Backend', entry:'src/main.ts', icon:'server' },
+  { id:'fastify', group:'Backend & APIs', label:'Fastify', detail:'JavaScript · Backend', entry:'src/server.js', icon:'server' },
+  { id:'hono', group:'Backend & APIs', label:'Hono', detail:'TypeScript · Edge API', entry:'src/index.ts', icon:'server' },
+  { id:'koa', group:'Backend & APIs', label:'Koa', detail:'JavaScript · Backend', entry:'src/server.js', icon:'server' },
+  { id:'bun', group:'Backend & APIs', label:'Bun', detail:'TypeScript · Runtime', entry:'src/index.ts', icon:'server' },
+  { id:'deno', group:'Backend & APIs', label:'Deno', detail:'TypeScript · Runtime', entry:'main.ts', icon:'server' },
+  { id:'django', group:'Backend & APIs', label:'Django', detail:'Python · Full stack', entry:'manage.py', icon:'python' },
+  { id:'flask', group:'Backend & APIs', label:'Flask', detail:'Python · Backend', entry:'app.py', icon:'python' },
+  { id:'streamlit', group:'Backend & APIs', label:'Streamlit', detail:'Python · Data app', entry:'app.py', icon:'python' },
+  { id:'gradio', group:'Backend & APIs', label:'Gradio', detail:'Python · AI interface', entry:'app.py', icon:'python' },
+  { id:'gin', group:'Backend & APIs', label:'Go + Gin', detail:'Go · Web API', entry:'main.go', icon:'server' },
+  { id:'axum', group:'Backend & APIs', label:'Rust + Axum', detail:'Rust · Web API', entry:'src/main.rs', icon:'server' },
+  { id:'spring', group:'Backend & APIs', label:'Spring Boot', detail:'Java · Backend', entry:'src/main/java/com/codeplus/app/Application.java', icon:'server' },
+  { id:'ktor', group:'Backend & APIs', label:'Ktor', detail:'Kotlin · Backend', entry:'src/main/kotlin/com/codeplus/Application.kt', icon:'server' },
+  { id:'aspnet', group:'Backend & APIs', label:'ASP.NET Core', detail:'C# · Full stack', entry:'Program.cs', icon:'server' },
+  { id:'laravel', group:'Backend & APIs', label:'Laravel', detail:'PHP · Full stack', entry:'routes/web.php', icon:'server' },
+  { id:'rails', group:'Backend & APIs', label:'Ruby on Rails', detail:'Ruby · Full stack', entry:'config/routes.rb', icon:'server' },
+  { id:'phoenix', group:'Backend & APIs', label:'Phoenix', detail:'Elixir · Full stack', entry:'lib/codeplus_web/router.ex', icon:'server' },
+
+  { id:'react-native', group:'Mobile & desktop', label:'React Native', detail:'TypeScript · Mobile', entry:'App.tsx', icon:'mobile' },
+  { id:'expo', group:'Mobile & desktop', label:'Expo', detail:'React Native · Mobile', entry:'App.tsx', icon:'mobile' },
+  { id:'flutter', group:'Mobile & desktop', label:'Flutter', detail:'Dart · Mobile', entry:'lib/main.dart', icon:'mobile' },
+  { id:'swiftui', group:'Mobile & desktop', label:'SwiftUI', detail:'Swift · Apple platforms', entry:'Sources/App/App.swift', icon:'mobile' },
+  { id:'android', group:'Mobile & desktop', label:'Android + Kotlin', detail:'Kotlin · Android', entry:'app/src/main/java/com/codeplus/MainActivity.kt', icon:'mobile' },
+  { id:'electron', group:'Mobile & desktop', label:'Electron', detail:'JavaScript · Desktop', entry:'src/main.js', icon:'mobile' },
+  { id:'tauri', group:'Mobile & desktop', label:'Tauri', detail:'Rust + Web · Desktop', entry:'src-tauri/src/main.rs', icon:'mobile' },
+
+  { id:'postgresql', group:'Data & services', label:'PostgreSQL', detail:'SQL · Relational database', entry:'db/schema.sql', icon:'data' },
+  { id:'supabase', group:'Data & services', label:'Supabase', detail:'Postgres · Backend platform', entry:'supabase/migrations/0001_initial.sql', icon:'data' },
+  { id:'firebase', group:'Data & services', label:'Firebase', detail:'Cloud · App backend', entry:'functions/src/index.ts', icon:'data' },
+  { id:'mongodb', group:'Data & services', label:'MongoDB', detail:'NoSQL · Database', entry:'src/index.js', icon:'data' },
+  { id:'prisma', group:'Data & services', label:'Prisma', detail:'TypeScript · ORM', entry:'prisma/schema.prisma', icon:'data' },
+  { id:'drizzle', group:'Data & services', label:'Drizzle ORM', detail:'TypeScript · ORM', entry:'src/schema.ts', icon:'data' },
+  { id:'sqlite', group:'Data & services', label:'SQLite', detail:'SQL · Embedded database', entry:'db/schema.sql', icon:'data' },
+
+  { id:'typescript', group:'Languages', label:'TypeScript', detail:'Typed JavaScript', entry:'src/main.ts', icon:'terminal', extension:'ts' },
+  { id:'javascript', group:'Languages', label:'JavaScript', detail:'Web and server language', entry:'src/main.js', icon:'terminal', extension:'js' },
+  { id:'python', group:'Languages', label:'Python', detail:'General-purpose language', entry:'src/main.py', icon:'python', extension:'py' },
+  { id:'go', group:'Languages', label:'Go', detail:'Cloud and systems language', entry:'src/main.go', icon:'terminal', extension:'go' },
+  { id:'rust', group:'Languages', label:'Rust', detail:'Safe systems language', entry:'src/main.rs', icon:'terminal', extension:'rs' },
+  { id:'java', group:'Languages', label:'Java', detail:'JVM language', entry:'src/Main.java', icon:'terminal', extension:'java' },
+  { id:'kotlin', group:'Languages', label:'Kotlin', detail:'JVM and Android language', entry:'src/Main.kt', icon:'terminal', extension:'kt' },
+  { id:'csharp', group:'Languages', label:'C#', detail:'.NET language', entry:'src/Program.cs', icon:'terminal', extension:'cs' },
+  { id:'cpp', group:'Languages', label:'C++', detail:'Systems language', entry:'src/main.cpp', icon:'terminal', extension:'cpp' },
+  { id:'c', group:'Languages', label:'C', detail:'Systems language', entry:'src/main.c', icon:'terminal', extension:'c' },
+  { id:'swift', group:'Languages', label:'Swift', detail:'Apple platform language', entry:'src/main.swift', icon:'terminal', extension:'swift' },
+  { id:'dart', group:'Languages', label:'Dart', detail:'Cross-platform language', entry:'src/main.dart', icon:'terminal', extension:'dart' },
+  { id:'php', group:'Languages', label:'PHP', detail:'Web language', entry:'src/index.php', icon:'terminal', extension:'php' },
+  { id:'ruby', group:'Languages', label:'Ruby', detail:'General-purpose language', entry:'src/main.rb', icon:'terminal', extension:'rb' },
+  { id:'elixir', group:'Languages', label:'Elixir', detail:'Concurrent functional language', entry:'src/main.exs', icon:'terminal', extension:'exs' },
+  { id:'scala', group:'Languages', label:'Scala', detail:'JVM functional language', entry:'src/Main.scala', icon:'terminal', extension:'scala' },
+  { id:'r', group:'Languages', label:'R', detail:'Statistics and data', entry:'src/main.R', icon:'terminal', extension:'R' },
+  { id:'julia', group:'Languages', label:'Julia', detail:'Scientific computing', entry:'src/main.jl', icon:'terminal', extension:'jl' },
+  { id:'lua', group:'Languages', label:'Lua', detail:'Embedded scripting', entry:'src/main.lua', icon:'terminal', extension:'lua' },
+  { id:'bash', group:'Languages', label:'Bash', detail:'Shell scripting', entry:'src/main.sh', icon:'terminal', extension:'sh' },
+  { id:'powershell', group:'Languages', label:'PowerShell', detail:'Cross-platform automation', entry:'src/main.ps1', icon:'terminal', extension:'ps1' },
+  { id:'solidity', group:'Languages', label:'Solidity', detail:'Smart contracts', entry:'contracts/Main.sol', icon:'terminal', extension:'sol' },
+  { id:'zig', group:'Languages', label:'Zig', detail:'Systems language', entry:'src/main.zig', icon:'terminal', extension:'zig' }
+];
+function projectTechnology(id) {
+  return PROJECT_TECHNOLOGIES.find(item => item.id === id) || PROJECT_TECHNOLOGIES[0];
+}
+function technologyIcon(technology) {
+  const brand = TECHNOLOGY_BRANDS[technology?.id];
+  const fallback = String(technology?.label || '?').replace(/[^A-Za-z0-9+#.]+/g, ' ').trim().split(/\s+/).map(word => word[0]).join('').slice(0, 3).toUpperCase() || '?';
+  const mark = brand?.[0] || fallback;
+  const color = brand?.[1] || '#91a7ff';
+  return `<span class="technology-brand-logo" style="--technology-brand:${color}" aria-hidden="true">${escape(mark)}</span>`;
+}
+function technologySelectOptions(selected='nextjs') {
+  const groups = [];
+  for (const technology of PROJECT_TECHNOLOGIES) {
+    let group = groups.find(item => item.label === technology.group);
+    if (!group) { group = { label:technology.group, items:[] }; groups.push(group); }
+    group.items.push(technology);
+  }
+  return groups.map(group => `<optgroup label="${group.label}">${group.items.map(technology => `<option value="${technology.id}" ${technology.id === selected ? 'selected' : ''}>${technology.label} — ${technology.detail}</option>`).join('')}</optgroup>`).join('');
+}
+function createNextProjectStarter(name) {
   const projectName = String(name || 'New CodePlus project').trim() || 'New CodePlus project';
   const profile = projectStarterProfile(projectName);
   const files = structuredClone(initialFiles);
@@ -98,9 +204,471 @@ function createProjectStarter(name) {
   files['src/app/page.tsx'] = `const features = ${JSON.stringify(profile.features, null, 2)};\n\nexport default function Home() {\n  const projectName = ${JSON.stringify(projectName)};\n\n  return (\n    <main>\n      <nav className="nav">\n        <a className="brand" href="#top" aria-label={\`${'${projectName}'} home\`}>\n          <span className="brand-mark" aria-hidden="true">${projectName.slice(0, 1).toUpperCase()}</span>\n          <span>{projectName}</span>\n        </a>\n        <a className="nav-link" href="#features">Explore</a>\n      </nav>\n\n      <section className="hero" id="top">\n        <div className="hero-glow" aria-hidden="true" />\n        <p className="eyebrow">${profile.eyebrow}</p>\n        <h1>${profile.headline}</h1>\n        <p className="lede">${profile.description}</p>\n        <div className="actions">\n          <a className="button primary" href="#features">${profile.primary}</a>\n          <a className="button secondary" href="#features">${profile.secondary}</a>\n        </div>\n        <div className="signal" aria-label="Scroll to discover"><span /> Scroll to discover</div>\n      </section>\n\n      <section className="features" id="features">\n        <div className="section-heading">\n          <p>${profile.label}</p>\n          <h2>A strong first chapter for {projectName}.</h2>\n        </div>\n        <div className="feature-grid">\n          {features.map(([number, title, copy]) => (\n            <article key={number}>\n              <span>{number}</span>\n              <h3>{title}</h3>\n              <p>{copy}</p>\n            </article>\n          ))}\n        </div>\n      </section>\n    </main>\n  );\n}\n`;
   files['src/app/globals.css'] = `:root {\n  color-scheme: dark;\n  --ink: #f7f9ff;\n  --muted: #aab3c8;\n  --surface: #0b101b;\n  --panel: rgba(255, 255, 255, 0.055);\n  --line: rgba(255, 255, 255, 0.13);\n  --accent: ${profile.accent};\n  --accent-2: ${profile.accent2};\n}\n\n* { box-sizing: border-box; }\nhtml { scroll-behavior: smooth; }\nbody { margin: 0; color: var(--ink); background: var(--surface); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }\na { color: inherit; text-decoration: none; }\n\nmain { min-height: 100svh; overflow: hidden; background: radial-gradient(circle at 50% -10%, color-mix(in srgb, var(--accent-2) 20%, transparent), transparent 38%), var(--surface); }\n.nav { position: absolute; inset: 0 0 auto; z-index: 5; display: flex; align-items: center; justify-content: space-between; width: min(1120px, calc(100% - 3rem)); margin: 0 auto; padding: 1.5rem 0; }\n.brand { display: inline-flex; align-items: center; gap: .7rem; font-weight: 780; letter-spacing: -.02em; }\n.brand-mark { display: grid; width: 2rem; height: 2rem; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: .65rem; color: #081018; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 8px 28px color-mix(in srgb, var(--accent-2) 24%, transparent); }\n.nav-link { padding: .65rem .9rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .82rem; }\n\n.hero { position: relative; isolation: isolate; display: flex; min-height: 100svh; flex-direction: column; align-items: center; justify-content: center; padding: 7rem 1.5rem 5rem; text-align: center; }\n.hero::before { position: absolute; inset: 0; z-index: -2; content: ""; opacity: .22; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 56px 56px; mask-image: linear-gradient(to bottom, black, transparent 82%); }\n.hero-glow { position: absolute; z-index: -1; width: min(70vw, 38rem); aspect-ratio: 1; border: 1px solid color-mix(in srgb, var(--accent-2) 32%, transparent); border-radius: 50%; box-shadow: 0 0 0 5rem color-mix(in srgb, var(--accent) 3%, transparent), 0 0 0 11rem color-mix(in srgb, var(--accent-2) 2%, transparent); }\n.eyebrow { margin: 0 0 1.35rem; color: var(--accent); font-size: .7rem; font-weight: 850; letter-spacing: .2em; }\nh1 { max-width: 900px; margin: 0; font-size: clamp(3rem, 8vw, 6.8rem); line-height: .92; letter-spacing: -.07em; text-wrap: balance; }\n.lede { max-width: 610px; margin: 1.6rem auto 0; color: var(--muted); font-size: clamp(1rem, 2vw, 1.18rem); line-height: 1.7; text-wrap: balance; }\n.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .8rem; margin-top: 2.2rem; }\n.button { min-width: 10rem; padding: .9rem 1.2rem; border: 1px solid var(--line); border-radius: .9rem; font-size: .9rem; font-weight: 780; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }\n.button:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 58%, transparent); }\n.button.primary { border-color: transparent; color: #081018; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 14px 38px color-mix(in srgb, var(--accent-2) 22%, transparent); }\n.button.secondary { background: var(--panel); backdrop-filter: blur(14px); }\n.signal { position: absolute; bottom: 2rem; display: flex; align-items: center; gap: .55rem; color: #778299; font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; }\n.signal span { width: .4rem; height: .4rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); }\n\n.features { width: min(1120px, calc(100% - 3rem)); margin: 0 auto; padding: 7rem 0; border-top: 1px solid var(--line); }\n.section-heading { display: grid; grid-template-columns: .65fr 1.35fr; gap: 2rem; align-items: start; }\n.section-heading p { margin: .4rem 0 0; color: var(--accent); font-size: .72rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }\n.section-heading h2 { max-width: 700px; margin: 0; font-size: clamp(2.2rem, 5vw, 4.2rem); line-height: 1; letter-spacing: -.055em; }\n.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 4rem; }\n.feature-grid article { min-height: 16rem; padding: 1.5rem; border: 1px solid var(--line); border-radius: 1.25rem; background: linear-gradient(145deg, var(--panel), transparent); }\n.feature-grid article > span { color: var(--accent); font-size: .72rem; font-weight: 800; }\n.feature-grid h3 { margin: 5rem 0 .7rem; font-size: 1.2rem; letter-spacing: -.025em; }\n.feature-grid p { margin: 0; color: var(--muted); font-size: .9rem; line-height: 1.65; }\n\n@media (max-width: 720px) {\n  .nav, .features { width: min(100% - 2rem, 1120px); }\n  .hero { padding-inline: 1rem; }\n  h1 { font-size: clamp(3rem, 15vw, 5rem); }\n  .section-heading, .feature-grid { grid-template-columns: 1fr; }\n  .feature-grid { margin-top: 2.5rem; }\n  .feature-grid article { min-height: auto; }\n  .feature-grid h3 { margin-top: 3rem; }\n}\n`;
   delete files['src/components/assistant.tsx'];
-  files['README.md'] = `# ${projectName}\n\nA ${profile.label.toLowerCase()} starter generated by CodePlus from the project name. The first screen is intentionally polished but easy to reshape through the Coding Agent.\n\n## Start locally\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nOpen http://localhost:3000.\n\n## Continue in CodePlus\n\nTry requests such as:\n\n- Change the headline and calls to action.\n- Add a pricing, schedule, menu, gallery, or contact section.\n- Adapt the colors and type to the brand.\n- Make the primary action functional.\n`;
-  files['AGENTS.md'] = `# ${projectName} project brief\n\nThis is a ${profile.label.toLowerCase()} project. Keep the product name **${projectName}** in project-facing metadata and copy unless the user explicitly renames it.\n\n## Product direction\n\n- Purpose: ${profile.description}\n- Visual direction: polished, spacious, responsive, and accessible; use ${profile.accent} and ${profile.accent2} as the initial accent family.\n- Preserve working behavior and unrelated user changes.\n- Inspect the relevant source before editing, make the smallest complete change, and run an appropriate check afterward.\n- When the user asks for a change, edit the workspace directly and finish with a concise summary of what changed and what was verified.\n`;
+  files['README.md'] = starterReadme(projectName, profile, projectTechnology('nextjs'), 'npm install', 'npm run dev');
+  files['AGENTS.md'] = starterAgentBrief(projectName, profile, projectTechnology('nextjs'), 'npm run build');
   return files;
+}
+
+function technologyPrerequisites(technology) {
+  const id = technology?.id || 'nextjs';
+  const requirement = (command, label, installHint) => ({ command, label, installHint });
+  const node = requirement('node', 'Node.js', 'Install the current Node.js LTS release from https://nodejs.org');
+  const npm = requirement('npm', 'npm', 'npm is included with Node.js from https://nodejs.org');
+  const byId = {
+    bun:[requirement('bun','Bun','Install Bun from https://bun.sh')],
+    deno:[requirement('deno','Deno','Install Deno from https://deno.com/runtime')],
+    django:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    flask:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    fastapi:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    streamlit:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    gradio:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    python:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    gin:[requirement('go','Go','Install Go from https://go.dev/dl')], go:[requirement('go','Go','Install Go from https://go.dev/dl')],
+    axum:[requirement('cargo','Rust toolchain','Install Rust with rustup from https://rustup.rs')], rust:[requirement('cargo','Rust toolchain','Install Rust with rustup from https://rustup.rs')],
+    spring:[requirement('java','Java 21','Install JDK 21 or newer'),requirement('mvn','Maven','Install Apache Maven from https://maven.apache.org')],
+    java:[requirement('java','Java 21','Install JDK 21 or newer'),requirement('mvn','Maven','Install Apache Maven from https://maven.apache.org')],
+    ktor:[requirement('java','Java 21','Install JDK 21 or newer'),requirement('gradle','Gradle','Install Gradle from https://gradle.org/install')],
+    kotlin:[requirement('java','Java 21','Install JDK 21 or newer'),requirement('gradle','Gradle','Install Gradle from https://gradle.org/install')],
+    android:[requirement('java','Java 21','Install Android Studio with its JDK'),requirement('gradle','Gradle','Install Gradle or add the Gradle wrapper')],
+    aspnet:[requirement('dotnet','.NET SDK','Install the current .NET SDK from https://dotnet.microsoft.com/download')], csharp:[requirement('dotnet','.NET SDK','Install the current .NET SDK from https://dotnet.microsoft.com/download')],
+    laravel:[requirement('php','PHP 8.2+','Install PHP 8.2 or newer and make `php` available in PATH'),requirement('composer','Composer','Install Composer from https://getcomposer.org')],
+    php:[requirement('php','PHP 8.2+','Install PHP 8.2 or newer and make `php` available in PATH'),requirement('composer','Composer','Install Composer from https://getcomposer.org')],
+    rails:[requirement('ruby','Ruby','Install Ruby from https://ruby-lang.org'),requirement('bundle','Bundler','Run `gem install bundler`')], ruby:[requirement('ruby','Ruby','Install Ruby from https://ruby-lang.org'),requirement('bundle','Bundler','Run `gem install bundler`')],
+    phoenix:[requirement('elixir','Elixir','Install Elixir from https://elixir-lang.org/install.html'),requirement('mix','Mix','Mix is included with Elixir')], elixir:[requirement('elixir','Elixir','Install Elixir from https://elixir-lang.org/install.html'),requirement('mix','Mix','Mix is included with Elixir')],
+    flutter:[requirement('flutter','Flutter','Install Flutter from https://docs.flutter.dev/get-started/install')],
+    swiftui:[requirement('swift','Swift','Install Xcode or the Swift toolchain')], swift:[requirement('swift','Swift','Install Xcode or the Swift toolchain')],
+    postgresql:[requirement('docker','Docker','Install Docker Desktop')], mongodb:[node,npm,requirement('docker','Docker','Install Docker Desktop')],
+    supabase:[requirement('supabase','Supabase CLI','Install the Supabase CLI')], firebase:[node,npm,requirement('firebase','Firebase CLI','Run `npm install -g firebase-tools`')],
+    prisma:[node,npm], drizzle:[node,npm], sqlite:[requirement('python3','Python 3','Install Python 3.11 or newer from https://python.org')],
+    tauri:[node,npm,requirement('cargo','Rust toolchain','Install Rust with rustup from https://rustup.rs')],
+    'react-native':[node,npm], expo:[node,npm], electron:[node,npm],
+    dart:[requirement('dart','Dart SDK','Install Dart from https://dart.dev/get-dart')],
+    cpp:[requirement('cmake','CMake','Install CMake and a C++ compiler')], c:[requirement('cmake','CMake','Install CMake and a C compiler')],
+    scala:[requirement('sbt','sbt','Install sbt and a compatible JDK')], r:[requirement('Rscript','R','Install R from https://r-project.org')],
+    julia:[requirement('julia','Julia','Install Julia from https://julialang.org/downloads')], lua:[requirement('lua','Lua','Install Lua and LuaRocks'),requirement('luarocks','LuaRocks','Install LuaRocks')],
+    bash:[requirement('bash','Bash','Install Bash'),requirement('make','Make','Install Make or developer command-line tools')],
+    powershell:[requirement('pwsh','PowerShell','Install PowerShell from https://microsoft.com/powershell')],
+    zig:[requirement('zig','Zig','Install Zig from https://ziglang.org/download')]
+  };
+  if (byId[id]) return byId[id];
+  return [node, npm];
+}
+
+function projectRuntimeContract(technology, installCommand, runCommand, checkCommand, url='') {
+  const prerequisites = technologyPrerequisites(technology);
+  return {
+    prerequisites,
+    stages: [
+      { id:'prerequisites', label:'Check prerequisites', detail:`Confirm ${prerequisites.map(item=>item.label).join(' and ')} are available in PATH.` },
+      { id:'setup', label:'Install dependencies', command:installCommand },
+      { id:'start', label:'Start the project', command:runCommand, ...(url ? { url } : {}) },
+      { id:'verify', label:'Verify the project', command:checkCommand }
+    ]
+  };
+}
+
+function starterAgentBrief(projectName, profile, technology, checkCommand) {
+  const guide = technologyEngineeringGuide(technology);
+  const prerequisites = technologyPrerequisites(technology);
+  return `# ${projectName} project instructions\n\nYou are the senior full-stack engineer responsible for this **${technology.label}** project. These instructions apply to the whole repository unless a deeper AGENTS.md or AGENTS.override.md provides more specific guidance.\n\n## Product direction\n\n- Product: **${projectName}**, a ${profile.label.toLowerCase()} experience.\n- Purpose: ${profile.description}\n- Visual direction: polished, spacious, responsive, and accessible; start with ${profile.accent} and ${profile.accent2} as the accent family.\n- Keep the product name in project-facing metadata and copy unless the user explicitly renames it.\n\n## ${technology.label} workflow\n\nFollow these stages in order; do not skip a failed stage or claim the project is ready before verification.\n\n1. Prerequisites: confirm ${prerequisites.map(item=>`\`${item.command}\` (${item.label})`).join(', ')} are available. If one is missing, explain exactly what to install.\n2. Setup: run \`${guide.install}\` and resolve dependency or environment errors.\n3. Start: run \`${guide.run}\` and confirm the process remains healthy.\n4. Verify: run \`${checkCommand}\` and inspect the relevant UI, endpoint, or program output.\n5. Report: summarize what changed, the files involved, why, and the checks that passed.\n\n- ${guide.rule}\n- Keep framework code in the generated source structure; do not replace it with an unrelated stack or a static mockup.\n- When adding a feature, include its routes, data boundary, error/loading states, and tests appropriate to ${technology.label}.\n\n## Engineering standard\n\n- Own requests end to end: inspect the relevant code, implement the complete result, and verify it before replying.\n- Preserve working behavior, unrelated files, and user changes. Never fabricate a successful edit or test.\n- Prefer maintainable, production-minded code with clear boundaries, accessible UI, secure defaults, and useful error states.\n- Use the existing architecture and dependencies before introducing new ones. Keep changes as small as possible while fully satisfying the request.\n- After changes, re-read the edited files and run \`${checkCommand}\` or the closest relevant check available.\n- Keep progress updates brief and finish with what changed, where, why, and what verification succeeded.\n`;
+}
+
+function technologyEngineeringGuide(technology) {
+  const id = technology?.id || 'nextjs';
+  const language = {
+    typescript:['npm install','npm run dev','Keep strict TypeScript enabled and separate domain logic from I/O.'], javascript:['npm install','npm start','Use ESM modules and keep side effects at the application boundary.'], python:['python3 -m venv .venv && source .venv/bin/activate','python3 -m src.main','Use type hints, small modules, and isolated environment configuration.'], go:['go mod tidy','go run ./src','Keep packages cohesive, pass context through I/O, and return explicit errors.'], rust:['cargo build','cargo run','Prefer ownership-safe APIs, typed errors, and clippy-clean code.'], java:['mvn compile','mvn exec:java','Keep packages layered and add unit tests for business logic.'], kotlin:['gradle build','gradle run','Use null-safe APIs, coroutines deliberately, and test domain logic.'], csharp:['dotnet restore','dotnet run','Keep nullable reference types enabled and use dependency injection at boundaries.'], cpp:['cmake -S . -B build','cmake --build build && ./build/app','Use RAII, modern C++, warnings, and focused tests.'], c:['cmake -S . -B build','cmake --build build && ./build/app','Keep ownership explicit, validate inputs, and compile with strict warnings.'], swift:['swift build','swift run','Use value types, structured concurrency, and XCTest-ready boundaries.'], dart:['dart pub get','dart run','Keep analysis strict and isolate platform or network code.'], php:['composer install','php src/index.php','Use PSR conventions, strict types, and Composer autoloading.'], ruby:['bundle install','bundle exec ruby src/main.rb','Keep objects small, dependencies explicit, and tests isolated.'], elixir:['mix deps.get','mix run','Use supervision, pattern matching, and ExUnit-ready modules.'], scala:['sbt compile','sbt run','Prefer immutable data, explicit effects, and typed domain models.'], r:['Rscript -e "renv::restore()"','Rscript src/main.R','Keep analysis reproducible and isolate data loading from transformations.'], julia:['julia --project -e "using Pkg; Pkg.instantiate()"','julia --project src/main.jl','Keep environments reproducible and functions type-stable.'], lua:['lua -v','lua src/main.lua','Keep modules explicit and avoid hidden global state.'], bash:['make check','bash src/main.sh','Use strict mode, quote expansions, and make commands idempotent.'], powershell:['pwsh -File src/main.ps1','pwsh -File src/main.ps1','Use advanced functions, terminating errors, and platform-neutral paths.'], solidity:['npm install','npm test','Keep contracts minimal, validate access control, and test failure paths.'], zig:['zig build','zig build run','Handle allocation and errors explicitly and keep tests beside implementation.']
+  }[id];
+  if (language) return { install:language[0], run:language[1], rule:language[2] };
+  if (technology?.group === 'Data & services') return { install:'follow README.md setup', run:'follow README.md local service command', rule:'Treat migrations and schemas as reviewed source; never place production credentials in the repository.' };
+  if (['fastapi','django','flask','streamlit','gradio'].includes(id)) return { install:'python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt', run:id==='django'?'python manage.py runserver 0.0.0.0:3000':id==='streamlit'?'streamlit run app.py --server.port 3000':id==='gradio'?'python app.py':'python app.py', rule:'Use typed Python boundaries, environment-based configuration, and framework-native tests.' };
+  if (['gin'].includes(id)) return { install:'go mod tidy', run:'go run .', rule:'Keep handlers thin, validate request data, and test routes with httptest.' };
+  if (['axum','tauri'].includes(id)) return { install:'cargo build', run:id==='tauri'?'npm run tauri dev':'cargo run', rule:'Use typed errors and keep asynchronous or native boundaries explicit.' };
+  if (['spring'].includes(id)) return { install:'mvn dependency:go-offline', run:'mvn spring-boot:run', rule:'Keep controllers thin and isolate service and persistence layers.' };
+  if (['ktor','android'].includes(id)) return { install:'gradle dependencies', run:id==='android'?'gradle installDebug':'gradle run', rule:'Use Kotlin null safety and keep platform/framework code at clear boundaries.' };
+  if (id === 'aspnet') return { install:'dotnet restore', run:'dotnet run', rule:'Use dependency injection, options validation, and endpoint tests.' };
+  if (id === 'laravel') return { install:'composer install && cp .env.example .env && php artisan key:generate', run:'php artisan serve --host=0.0.0.0 --port=3000', rule:'Use Laravel routes, controllers, validation, Eloquent, migrations, Blade/Vite, and feature tests instead of ad-hoc PHP files.' };
+  if (id === 'rails') return { install:'bundle install && bin/rails db:prepare', run:'bin/rails server -p 3000', rule:'Follow Rails conventions for routes, controllers, models, migrations, views, and request tests.' };
+  if (id === 'phoenix') return { install:'mix setup', run:'mix phx.server', rule:'Keep contexts separate from web concerns and cover LiveView/controllers with ExUnit.' };
+  if (id === 'flutter') return { install:'flutter pub get', run:'flutter run', rule:'Keep widgets composable, state explicit, and add widget/unit tests.' };
+  if (id === 'swiftui') return { install:'swift package resolve', run:'swift run', rule:'Keep view state observable, dependencies injectable, and logic testable.' };
+  return { install:'npm install', run:['react-native','expo'].includes(id)?'npm start':'npm run dev', rule:'Use the selected framework’s routing, component, state, styling, and test conventions.' };
+}
+
+function starterReadme(projectName, profile, technology, installCommand, runCommand, url='http://localhost:3000', checkCommand='the validation command in AGENTS.md') {
+  const prerequisites = technologyPrerequisites(technology);
+  return `# ${projectName}\n\nA ${profile.label.toLowerCase()} starter generated by CodePlus with **${technology.label}**. It includes project-specific content, metadata, responsive styling, and an AGENTS.md engineering brief.\n\n## Setup stages\n\n1. **Check prerequisites** — confirm ${prerequisites.map(item=>`\`${item.command}\` (${item.label})`).join(', ')} are available in your terminal.\n2. **Install dependencies** — run \`${installCommand}\`.\n3. **Start the project** — run \`${runCommand}\`.\n4. **Verify the result** — open ${url} and run \`${checkCommand}\` before shipping.\n\nCodePlus follows these same stages when you click **Start dev server**. If a runtime is missing, install the named prerequisite and retry.\n\n## Continue in CodePlus\n\nAsk the Coding Agent to add features, connect data, refine the interface, write tests, or prepare the project for deployment. It will use AGENTS.md and codeplus.project.json as project-level guidance.\n`;
+}
+
+function starterWebStyles(profile) {
+  return `:root { color-scheme: dark; --ink:#f7f9ff; --muted:#aab3c8; --surface:#0b101b; --panel:rgba(255,255,255,.055); --line:rgba(255,255,255,.13); --accent:${profile.accent}; --accent-2:${profile.accent2}; }\n* { box-sizing:border-box; }\nhtml { scroll-behavior:smooth; }\nbody { margin:0; color:var(--ink); background:var(--surface); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }\na { color:inherit; text-decoration:none; }\nmain { min-height:100svh; overflow:hidden; background:radial-gradient(circle at 50% -10%,color-mix(in srgb,var(--accent-2) 20%,transparent),transparent 38%),var(--surface); }\n.nav { display:flex; align-items:center; justify-content:space-between; width:min(1120px,calc(100% - 3rem)); margin:0 auto; padding:1.5rem 0; }\n.brand { display:flex; align-items:center; gap:.7rem; font-weight:800; }\n.brand-mark { display:grid; width:2rem; height:2rem; place-items:center; border-radius:.65rem; color:#081018; background:linear-gradient(135deg,var(--accent),var(--accent-2)); }\n.nav-link,.button { border:1px solid var(--line); border-radius:999px; padding:.7rem 1rem; }\n.hero { display:flex; min-height:calc(100svh - 80px); flex-direction:column; align-items:center; justify-content:center; padding:5rem 1.5rem; text-align:center; }\n.eyebrow { margin:0 0 1.2rem; color:var(--accent); font-size:.72rem; font-weight:850; letter-spacing:.2em; }\nh1 { max-width:900px; margin:0; font-size:clamp(3rem,8vw,6.6rem); line-height:.92; letter-spacing:-.065em; text-wrap:balance; }\n.lede { max-width:620px; margin:1.5rem auto 0; color:var(--muted); font-size:clamp(1rem,2vw,1.18rem); line-height:1.7; }\n.actions { display:flex; flex-wrap:wrap; justify-content:center; gap:.8rem; margin-top:2rem; }\n.button { min-width:10rem; border-radius:.9rem; font-weight:780; transition:transform 160ms ease,border-color 160ms ease; }\n.button:hover { transform:translateY(-2px); border-color:var(--accent); }\n.button.primary { border-color:transparent; color:#081018; background:linear-gradient(135deg,var(--accent),var(--accent-2)); }\n.features { width:min(1120px,calc(100% - 3rem)); margin:0 auto; padding:6rem 0; border-top:1px solid var(--line); }\n.section-heading p { color:var(--accent); font-size:.72rem; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }\n.section-heading h2 { max-width:720px; margin:.8rem 0 0; font-size:clamp(2.1rem,5vw,4rem); line-height:1; letter-spacing:-.05em; }\n.feature-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin-top:3rem; }\n.feature-grid article { min-height:14rem; padding:1.5rem; border:1px solid var(--line); border-radius:1.2rem; background:linear-gradient(145deg,var(--panel),transparent); }\n.feature-grid article>span { color:var(--accent); font-size:.72rem; font-weight:800; }\n.feature-grid h3 { margin:4rem 0 .7rem; }\n.feature-grid p { color:var(--muted); line-height:1.65; }\n@media (max-width:720px) { .nav,.features { width:min(100% - 2rem,1120px); } .feature-grid { grid-template-columns:1fr; } .feature-grid article { min-height:auto; } .feature-grid h3 { margin-top:2rem; } }\n`;
+}
+
+function starterHtml(projectName, profile, assetPrefix='') {
+  const safeName = String(projectName).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const cards = profile.features.map(([number,title,copy]) => `<article><span>${number}</span><h3>${title}</h3><p>${copy}</p></article>`).join('');
+  return `<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <meta name="description" content="${profile.description}" />\n  <title>${safeName}</title>\n  <link rel="stylesheet" href="${assetPrefix}styles.css" />\n</head>\n<body>\n  <main>\n    <nav class="nav"><a class="brand" href="#top"><span class="brand-mark">${safeName.slice(0,1).toUpperCase()}</span>${safeName}</a><a class="nav-link" href="#features">Explore</a></nav>\n    <section class="hero" id="top"><p class="eyebrow">${profile.eyebrow}</p><h1>${profile.headline}</h1><p class="lede">${profile.description}</p><div class="actions"><a class="button primary" href="#features">${profile.primary}</a><a class="button" href="#features">${profile.secondary}</a></div></section>\n    <section class="features" id="features"><div class="section-heading"><p>${profile.label}</p><h2>A strong first chapter for ${safeName}.</h2></div><div class="feature-grid">${cards}</div></section>\n  </main>\n  <script src="${assetPrefix}script.js"></script>\n</body>\n</html>\n`;
+}
+
+function createReactProjectStarter(projectName, profile) {
+  const technology = projectTechnology('react');
+  const files = {
+    'package.json': `${JSON.stringify({ name:projectSlug(projectName), version:'0.1.0', private:true, type:'module', scripts:{ dev:'vite --host 0.0.0.0', build:'tsc -b && vite build', preview:'vite preview --host 0.0.0.0' }, dependencies:{ '@vitejs/plugin-react':'latest', vite:'latest', typescript:'latest', react:'latest', 'react-dom':'latest' }, devDependencies:{ '@types/react':'latest', '@types/react-dom':'latest' } }, null, 2)}\n`,
+    'index.html': `<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta name="description" content=${JSON.stringify(profile.description)}/><title>${projectName}</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n`,
+    'vite.config.ts': `import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({ plugins: [react()] });\n`,
+    'tsconfig.json': `{"compilerOptions":{"target":"ES2022","useDefineForClassFields":true,"lib":["ES2022","DOM","DOM.Iterable"],"allowJs":false,"skipLibCheck":true,"esModuleInterop":true,"allowSyntheticDefaultImports":true,"strict":true,"forceConsistentCasingInFileNames":true,"module":"ESNext","moduleResolution":"Bundler","resolveJsonModule":true,"isolatedModules":true,"noEmit":true,"jsx":"react-jsx"},"include":["src"]}\n`,
+    'src/main.tsx': `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\nimport './styles.css';\n\nReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);\n`,
+    'src/App.tsx': `const features = ${JSON.stringify(profile.features, null, 2)};\n\nexport default function App() {\n  const projectName = ${JSON.stringify(projectName)};\n  return <main><nav className="nav"><a className="brand" href="#top"><span className="brand-mark">${projectName.slice(0,1).toUpperCase()}</span>{projectName}</a><a className="nav-link" href="#features">Explore</a></nav><section className="hero" id="top"><p className="eyebrow">${profile.eyebrow}</p><h1>${profile.headline}</h1><p className="lede">${profile.description}</p><div className="actions"><a className="button primary" href="#features">${profile.primary}</a><a className="button" href="#features">${profile.secondary}</a></div></section><section className="features" id="features"><div className="section-heading"><p>${profile.label}</p><h2>A strong first chapter for {projectName}.</h2></div><div className="feature-grid">{features.map(([number,title,copy]) => <article key={number}><span>{number}</span><h3>{title}</h3><p>{copy}</p></article>)}</div></section></main>;\n}\n`,
+    'src/styles.css': starterWebStyles(profile),
+    'README.md': starterReadme(projectName, profile, technology, 'npm install', 'npm run dev', 'http://localhost:5173'),
+    'AGENTS.md': starterAgentBrief(projectName, profile, technology, 'npm run build')
+  };
+  return files;
+}
+
+function createStaticProjectStarter(projectName, profile) {
+  const technology = projectTechnology('static');
+  return {
+    'package.json': `${JSON.stringify({ name:projectSlug(projectName), version:'0.1.0', private:true, type:'module', scripts:{ dev:'vite --host 0.0.0.0', build:'vite build', preview:'vite preview --host 0.0.0.0' }, devDependencies:{ vite:'latest' } }, null, 2)}\n`,
+    'index.html': starterHtml(projectName, profile),
+    'styles.css': starterWebStyles(profile),
+    'script.js': `document.querySelectorAll('a[href^="#"]').forEach(link => link.addEventListener('click', event => {\n  const target = document.querySelector(link.getAttribute('href'));\n  if (target) { event.preventDefault(); target.scrollIntoView({ behavior: 'smooth' }); }\n}));\n`,
+    'README.md': starterReadme(projectName, profile, technology, 'npm install', 'npm run dev', 'http://localhost:5173'),
+    'AGENTS.md': starterAgentBrief(projectName, profile, technology, 'npm run build')
+  };
+}
+
+function createExpressProjectStarter(projectName, profile) {
+  const technology = projectTechnology('express');
+  return {
+    'package.json': `${JSON.stringify({ name:projectSlug(projectName), version:'0.1.0', private:true, type:'module', scripts:{ dev:'node --watch src/server.js', start:'node src/server.js', check:'node --check src/server.js' }, dependencies:{ express:'latest' } }, null, 2)}\n`,
+    'src/server.js': `import express from 'express';\nimport path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n\nconst app = express();\nconst port = Number(process.env.PORT) || 3000;\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');\n\napp.use(express.json());\napp.use(express.static(path.join(root, 'public')));\napp.get('/api/health', (_request, response) => response.json({ ok: true, service: ${JSON.stringify(projectName)} }));\napp.listen(port, () => console.log(${JSON.stringify(`${projectName} running at http://localhost:`)} + port));\n`,
+    'public/index.html': starterHtml(projectName, profile),
+    'public/styles.css': starterWebStyles(profile),
+    'public/script.js': `fetch('/api/health').then(response => response.json()).then(data => console.info('API ready:', data.service)).catch(() => {});\n`,
+    'README.md': starterReadme(projectName, profile, technology, 'npm install', 'npm run dev'),
+    'AGENTS.md': starterAgentBrief(projectName, profile, technology, 'npm run check')
+  };
+}
+
+function createFastApiProjectStarter(projectName, profile) {
+  const technology = projectTechnology('fastapi');
+  return {
+    'package.json': `${JSON.stringify({ name:projectSlug(projectName), version:'0.1.0', private:true, scripts:{ dev:'python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 3000', check:'python3 -m compileall app' } }, null, 2)}\n`,
+    'requirements.txt': `fastapi>=0.115,<1.0\nuvicorn[standard]>=0.34,<1.0\n`,
+    'app/__init__.py': '',
+    'app/main.py': `from pathlib import Path\n\nfrom fastapi import FastAPI\nfrom fastapi.responses import FileResponse\nfrom fastapi.staticfiles import StaticFiles\n\nBASE_DIR = Path(__file__).resolve().parent.parent\nPUBLIC_DIR = BASE_DIR / "public"\napp = FastAPI(title=${JSON.stringify(projectName)}, version="0.1.0")\napp.mount("/assets", StaticFiles(directory=PUBLIC_DIR), name="assets")\n\n\n@app.get("/api/health")\ndef health() -> dict[str, object]:\n    return {"ok": True, "service": ${JSON.stringify(projectName)}}\n\n\n@app.get("/", include_in_schema=False)\ndef home() -> FileResponse:\n    return FileResponse(PUBLIC_DIR / "index.html")\n`,
+    'public/index.html': starterHtml(projectName, profile, '/assets/'),
+    'public/styles.css': starterWebStyles(profile),
+    'public/script.js': `fetch('/api/health').then(response => response.json()).then(data => console.info('API ready:', data.service)).catch(() => {});\n`,
+    'README.md': starterReadme(projectName, profile, technology, 'python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt', 'npm run dev'),
+    'AGENTS.md': starterAgentBrief(projectName, profile, technology, 'npm run check')
+  };
+}
+
+function starterPackage(projectName, scripts, dependencies={}, devDependencies={}) {
+  return `${JSON.stringify({ name:projectSlug(projectName), version:'0.1.0', private:true, type:'module', scripts, dependencies, devDependencies }, null, 2)}\n`;
+}
+
+function completeStarter(files, projectName, profile, technology, checkCommand, installCommand, runCommand, url='') {
+  const previewUrl = /^https?:\/\//i.test(url) ? url : '';
+  files['README.md'] = starterReadme(projectName, profile, technology, installCommand, runCommand, url || 'the local URL printed by the development server', checkCommand);
+  files['AGENTS.md'] = starterAgentBrief(projectName, profile, technology, checkCommand);
+  files['codeplus.project.json'] = `${JSON.stringify({ name:projectName, slug:projectSlug(projectName), technology:{ id:technology.id, label:technology.label, group:technology.group, detail:technology.detail }, commands:{ install:installCommand, run:runCommand, check:checkCommand }, runtime:projectRuntimeContract(technology,installCommand,runCommand,checkCommand,previewUrl), ...(previewUrl ? { preview:{ url:previewUrl } } : {}), product:{ label:profile.label, description:profile.description, accent:profile.accent, accent2:profile.accent2 }, generatedBy:'CodePlus' }, null, 2)}\n`;
+  files['.gitignore'] ||= `.DS_Store\n.env\n.env.*\n!.env.example\nnode_modules/\ndist/\nbuild/\n.venv/\n__pycache__/\ntarget/\n`;
+  return files;
+}
+
+function starterMarkup(projectName, profile) {
+  return `<main><p>${profile.eyebrow}</p><h1>${profile.headline}</h1><p>${profile.description}</p><button>${profile.primary}</button></main>`;
+}
+
+function createWebFrameworkStarter(projectName, profile, technology) {
+  const commonHtml = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${projectName}</title></head><body><div id="app"></div><script type="module" src="/src/main.ts"></script></body></html>\n`;
+  const markup = starterMarkup(projectName, profile);
+  const recipes = {
+    vue: { scripts:{dev:'vite --host 0.0.0.0',build:'vite build',check:'vue-tsc --noEmit'}, deps:{vue:'latest'}, dev:{'@vitejs/plugin-vue':'latest',vite:'latest',typescript:'latest','vue-tsc':'latest'}, files:{'index.html':commonHtml,'vite.config.ts':`import { defineConfig } from 'vite';\nimport vue from '@vitejs/plugin-vue';\nexport default defineConfig({ plugins:[vue()] });\n`,'src/main.ts':`import { createApp } from 'vue';\nimport App from './App.vue';\ncreateApp(App).mount('#app');\n`,'src/App.vue':`<script setup lang="ts">const projectName = ${JSON.stringify(projectName)};</script>\n<template>${markup.replace(projectName, '{{ projectName }}')}</template>\n<style>main{max-width:48rem;margin:12vh auto;font-family:system-ui}button{padding:.8rem 1rem}</style>\n`} },
+    nuxt: { scripts:{dev:'nuxt dev --host 0.0.0.0 --port 3000',build:'nuxt build',check:'nuxt typecheck'}, deps:{nuxt:'latest',vue:'latest'}, dev:{typescript:'latest'}, files:{'nuxt.config.ts':`export default defineNuxtConfig({ devtools:{ enabled:true }, typescript:{ strict:true } });\n`,'app.vue':`<script setup lang="ts">useHead({ title:${JSON.stringify(projectName)} });</script>\n<template>${markup}</template>\n<style>main{max-width:48rem;margin:12vh auto;font-family:system-ui}</style>\n`} },
+    angular: { scripts:{dev:'ng serve --host 0.0.0.0 --port 3000',build:'ng build',check:'ng build'}, deps:{'@angular/common':'latest','@angular/compiler':'latest','@angular/core':'latest','@angular/platform-browser':'latest',rxjs:'latest','zone.js':'latest'}, dev:{'@angular-devkit/build-angular':'latest','@angular/cli':'latest','@angular/compiler-cli':'latest',typescript:'latest'}, files:{'angular.json':`${JSON.stringify({version:1,projects:{app:{projectType:'application',root:'',sourceRoot:'src',architect:{build:{builder:'@angular-devkit/build-angular:application',options:{browser:'src/main.ts',index:'src/index.html',tsConfig:'tsconfig.json'}}}}}},null,2)}\n`,'tsconfig.json':`{"compilerOptions":{"target":"ES2022","strict":true,"experimentalDecorators":true},"angularCompilerOptions":{"strictTemplates":true},"files":["src/main.ts"]}\n`,'src/index.html':`<app-root></app-root>\n`,'src/main.ts':`import { bootstrapApplication } from '@angular/platform-browser';\nimport { AppComponent } from './app/app.component';\nbootstrapApplication(AppComponent).catch(console.error);\n`,'src/app/app.component.ts':`import { Component } from '@angular/core';\n@Component({ selector:'app-root', standalone:true, template:${JSON.stringify(markup)} })\nexport class AppComponent {}\n`} },
+    svelte: { scripts:{dev:'vite --host 0.0.0.0',build:'vite build',check:'svelte-check'}, deps:{svelte:'latest'}, dev:{'@sveltejs/vite-plugin-svelte':'latest',vite:'latest','svelte-check':'latest',typescript:'latest'}, files:{'index.html':commonHtml.replace('/src/main.ts','/src/main.js'),'vite.config.js':`import { defineConfig } from 'vite';\nimport { svelte } from '@sveltejs/vite-plugin-svelte';\nexport default defineConfig({ plugins:[svelte()] });\n`,'src/main.js':`import { mount } from 'svelte';\nimport App from './App.svelte';\nmount(App,{ target:document.getElementById('app') });\n`,'src/App.svelte':`${markup}\n<style>main{max-width:48rem;margin:12vh auto;font-family:system-ui}</style>\n`} },
+    sveltekit: { scripts:{dev:'vite dev --host 0.0.0.0 --port 3000',build:'vite build',check:'svelte-kit sync && svelte-check'}, deps:{svelte:'latest'}, dev:{'@sveltejs/adapter-auto':'latest','@sveltejs/kit':'latest',vite:'latest','svelte-check':'latest',typescript:'latest'}, files:{'svelte.config.js':`import adapter from '@sveltejs/adapter-auto';\nexport default { kit:{ adapter:adapter() } };\n`,'vite.config.ts':`import { sveltekit } from '@sveltejs/kit/vite';\nimport { defineConfig } from 'vite';\nexport default defineConfig({ plugins:[sveltekit()] });\n`,'src/routes/+page.svelte':`${markup}\n`} },
+    astro: { scripts:{dev:'astro dev --host 0.0.0.0 --port 3000',build:'astro build',check:'astro check'}, deps:{astro:'latest'}, dev:{typescript:'latest'}, files:{'astro.config.mjs':`import { defineConfig } from 'astro/config';\nexport default defineConfig({});\n`,'src/pages/index.astro':`---\nconst title = ${JSON.stringify(projectName)};\n---\n<html lang="en"><head><title>{title}</title></head><body>${markup}</body></html>\n`} },
+    remix: { scripts:{dev:'remix vite:dev --host 0.0.0.0 --port 3000',build:'remix vite:build',check:'tsc --noEmit'}, deps:{'@remix-run/node':'latest','@remix-run/react':'latest','@remix-run/serve':'latest','isbot':'latest',react:'latest','react-dom':'latest'}, dev:{'@remix-run/dev':'latest',vite:'latest',typescript:'latest','@types/react':'latest','@types/react-dom':'latest'}, files:{'vite.config.ts':`import { vitePlugin as remix } from '@remix-run/dev';\nimport { defineConfig } from 'vite';\nexport default defineConfig({ plugins:[remix()] });\n`,'app/root.tsx':`import { Links,Meta,Outlet,Scripts,ScrollRestoration } from '@remix-run/react';\nexport default function App(){return <html lang="en"><head><Meta/><Links/></head><body><Outlet/><ScrollRestoration/><Scripts/></body></html>}\n`,'app/routes/_index.tsx':`export const meta=()=>[{title:${JSON.stringify(projectName)}}];\nexport default function Index(){return <>${markup}</>}\n`} },
+    solid: { scripts:{dev:'vite --host 0.0.0.0',build:'vite build',check:'tsc --noEmit'}, deps:{'solid-js':'latest'}, dev:{'vite-plugin-solid':'latest',vite:'latest',typescript:'latest'}, files:{'index.html':commonHtml.replace('/src/main.ts','/src/main.tsx'),'vite.config.ts':`import { defineConfig } from 'vite';\nimport solid from 'vite-plugin-solid';\nexport default defineConfig({ plugins:[solid()] });\n`,'src/main.tsx':`import { render } from 'solid-js/web';\nimport App from './App';\nrender(() => <App />, document.getElementById('app')!);\n`,'src/App.tsx':`export default function App(){return <>${markup}</>}\n`} },
+    qwik: { scripts:{dev:'vite --host 0.0.0.0 --port 3000',build:'vite build',check:'tsc --noEmit'}, deps:{'@builder.io/qwik':'latest','@builder.io/qwik-city':'latest'}, dev:{vite:'latest',typescript:'latest'}, files:{'vite.config.ts':`import { defineConfig } from 'vite';\nimport { qwikCity } from '@builder.io/qwik-city/vite';\nimport { qwikVite } from '@builder.io/qwik/optimizer';\nexport default defineConfig({ plugins:[qwikCity(),qwikVite()] });\n`,'src/root.tsx':`import { component$ } from '@builder.io/qwik';\nimport { QwikCityProvider,RouterOutlet } from '@builder.io/qwik-city';\nexport default component$(()=> <QwikCityProvider><RouterOutlet/></QwikCityProvider>);\n`,'src/routes/index.tsx':`import { component$ } from '@builder.io/qwik';\nexport default component$(()=> <>${markup}</>);\n`} },
+    preact: { scripts:{dev:'vite --host 0.0.0.0',build:'vite build',check:'tsc --noEmit'}, deps:{preact:'latest'}, dev:{'@preact/preset-vite':'latest',vite:'latest',typescript:'latest'}, files:{'index.html':commonHtml.replace('/src/main.ts','/src/main.jsx'),'vite.config.js':`import { defineConfig } from 'vite';\nimport preact from '@preact/preset-vite';\nexport default defineConfig({ plugins:[preact()] });\n`,'src/main.jsx':`import { render } from 'preact';\nimport App from './app';\nrender(<App/>,document.getElementById('app'));\n`,'src/app.jsx':`export default function App(){return <>${markup}</>}\n`} },
+    lit: { scripts:{dev:'vite --host 0.0.0.0',build:'vite build',check:'tsc --noEmit'}, deps:{lit:'latest'}, dev:{vite:'latest',typescript:'latest'}, files:{'index.html':commonHtml.replace('<div id="app"></div>','<codeplus-app></codeplus-app>'),'tsconfig.json':`{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","strict":true,"experimentalDecorators":true,"useDefineForClassFields":false},"include":["src"]}\n`,'src/main.ts':`import { LitElement,html,css } from 'lit';\nimport { customElement } from 'lit/decorators.js';\n@customElement('codeplus-app') class App extends LitElement { static styles=css\`:host{display:block;max-width:48rem;margin:12vh auto;font-family:system-ui}\`; render(){return html\`<main><p>${profile.eyebrow}</p><h1>${profile.headline}</h1><p>${profile.description}</p></main>\`;} }\n`} }
+  };
+  if (recipes[technology.id]) {
+    const recipe = recipes[technology.id];
+    const files = { 'package.json':starterPackage(projectName, recipe.scripts, recipe.deps, recipe.dev), ...recipe.files };
+    return completeStarter(files, projectName, profile, technology, 'npm run check', 'npm install', 'npm run dev', 'http://localhost:3000');
+  }
+  if (['alpine','htmx','tailwind'].includes(technology.id)) {
+    const library = technology.id === 'alpine' ? '<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>' : technology.id === 'htmx' ? '<script src="https://unpkg.com/htmx.org@2"></script>' : '<script src="https://cdn.tailwindcss.com"></script>';
+    const files = { 'package.json':starterPackage(projectName,{dev:'vite --host 0.0.0.0',build:'vite build',check:'vite build'},{},{vite:'latest'}), 'index.html':`<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${projectName}</title>${library}</head><body>${markup}</body></html>\n`, 'styles.css':starterWebStyles(profile) };
+    return completeStarter(files, projectName, profile, technology, 'npm run check', 'npm install', 'npm run dev', 'http://localhost:5173');
+  }
+  return null;
+}
+
+function createBackendProjectStarter(projectName, profile, technology) {
+  const service = JSON.stringify(projectName);
+  const nodeRecipes = {
+    nestjs:{ deps:{'@nestjs/common':'latest','@nestjs/core':'latest','@nestjs/platform-express':'latest','reflect-metadata':'latest',rxjs:'latest'}, dev:{'@nestjs/cli':'latest','@types/node':'latest',tsx:'latest',typescript:'latest'}, entry:`import 'reflect-metadata';\nimport { NestFactory } from '@nestjs/core';\nimport { Module,Controller,Get } from '@nestjs/common';\n@Controller() class AppController { @Get() home(){ return { ok:true, service:${service} }; } }\n@Module({ controllers:[AppController] }) class AppModule {}\nNestFactory.create(AppModule).then(app => app.listen(3000,'0.0.0.0'));\n`},
+    fastify:{ deps:{fastify:'latest'}, dev:{}, entry:`import Fastify from 'fastify';\nconst app=Fastify({logger:true});\napp.get('/',async()=>({ok:true,service:${service}}));\nawait app.listen({port:Number(process.env.PORT)||3000,host:'0.0.0.0'});\n`},
+    hono:{ deps:{'@hono/node-server':'latest',hono:'latest'}, dev:{tsx:'latest',typescript:'latest','@types/node':'latest'}, entry:`import { serve } from '@hono/node-server';\nimport { Hono } from 'hono';\nconst app=new Hono();\napp.get('/',c=>c.json({ok:true,service:${service}}));\nserve({fetch:app.fetch,port:3000});\n`},
+    koa:{ deps:{koa:'latest','@koa/router':'latest'}, dev:{}, entry:`import Koa from 'koa';\nimport Router from '@koa/router';\nconst app=new Koa(); const router=new Router();\nrouter.get('/',ctx=>{ctx.body={ok:true,service:${service}}});\napp.use(router.routes()).listen(3000);\n`},
+    bun:{ deps:{}, dev:{}, entry:`const server=Bun.serve({port:3000,fetch(){return Response.json({ok:true,service:${service}})}});\nconsole.log(\`Listening on \${server.url}\`);\n`}
+  };
+  if (nodeRecipes[technology.id]) {
+    const recipe=nodeRecipes[technology.id];
+    const typed=['nestjs','hono','bun'].includes(technology.id);
+    const scripts=technology.id==='bun'?{dev:'bun --watch src/index.ts',start:'bun src/index.ts',check:'bun test'}:{dev:`${typed?'tsx watch':'node --watch'} ${technology.entry}`,start:`${typed?'tsx':'node'} ${technology.entry}`,check:typed?'tsc --noEmit':`node --check ${technology.entry}`};
+    const files={'package.json':starterPackage(projectName,scripts,recipe.deps,recipe.dev),[technology.entry]:recipe.entry};
+    if (typed) files['tsconfig.json']=`{"compilerOptions":{"target":"ES2022","module":"NodeNext","moduleResolution":"NodeNext","strict":true,"experimentalDecorators":true,"emitDecoratorMetadata":true,"noEmit":true},"include":["src"]}\n`;
+    return completeStarter(files,projectName,profile,technology,'npm run check','npm install','npm run dev','http://localhost:3000');
+  }
+  if (technology.id === 'deno') return completeStarter({
+    'deno.json':`${JSON.stringify({tasks:{dev:'deno run --watch --allow-net main.ts',start:'deno run --allow-net main.ts',check:'deno check main.ts'},imports:{'@std/http':'jsr:@std/http@^1'}},null,2)}\n`,
+    'main.ts':`Deno.serve({port:3000},()=>Response.json({ok:true,service:${service}}));\n`
+  },projectName,profile,technology,'deno task check','deno install','deno task dev','http://localhost:3000');
+  if (['django','flask','streamlit','gradio'].includes(technology.id)) {
+    const requirements={django:'Django>=5,<6\n',flask:'Flask>=3,<4\n',streamlit:'streamlit>=1,<2\n',gradio:'gradio>=5,<7\n'}[technology.id];
+    const files={'requirements.txt':requirements,'pyproject.toml':`[tool.pytest.ini_options]\npythonpath = ["."]\n`};
+    let run='python app.py';
+    if (technology.id==='django') Object.assign(files,{
+      'manage.py':`#!/usr/bin/env python3\nimport os,sys\nos.environ.setdefault("DJANGO_SETTINGS_MODULE","config.settings")\nfrom django.core.management import execute_from_command_line\nexecute_from_command_line(sys.argv)\n`,
+      'config/__init__.py':'','config/settings.py':`from pathlib import Path\nBASE_DIR=Path(__file__).resolve().parent.parent\nSECRET_KEY="development-only-change-me"\nDEBUG=True\nALLOWED_HOSTS=["localhost","127.0.0.1"]\nROOT_URLCONF="config.urls"\nINSTALLED_APPS=[]\nMIDDLEWARE=[]\nTEMPLATES=[]\n`,
+      'config/urls.py':`from django.http import JsonResponse\nfrom django.urls import path\ndef home(_request): return JsonResponse({"ok":True,"service":${service}})\nurlpatterns=[path("",home)]\n`
+    }), run='python manage.py runserver 0.0.0.0:3000';
+    if (technology.id==='flask') files['app.py']=`from flask import Flask,jsonify\napp=Flask(__name__)\n@app.get("/")\ndef home(): return jsonify(ok=True,service=${service})\nif __name__=="__main__": app.run(host="0.0.0.0",port=3000,debug=True)\n`;
+    if (technology.id==='streamlit') files['app.py']=`import streamlit as st\nst.set_page_config(page_title=${service})\nst.title(${JSON.stringify(profile.headline)})\nst.write(${JSON.stringify(profile.description)})\n`;
+    if (technology.id==='gradio') files['app.py']=`import gradio as gr\ndef welcome(name: str) -> str: return f"Welcome to ${projectName}, {name or 'builder'}!"\ngr.Interface(fn=welcome,inputs="text",outputs="text",title=${service}).launch(server_name="0.0.0.0",server_port=3000)\n`;
+    const check='python3 -m compileall .';
+    return completeStarter(files,projectName,profile,technology,check,'python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt',run,'http://localhost:3000');
+  }
+  if (technology.id==='gin') return completeStarter({'go.mod':`module ${projectSlug(projectName)}\n\ngo 1.23\n\nrequire github.com/gin-gonic/gin v1.10.0\n`,'main.go':`package main\nimport "github.com/gin-gonic/gin"\nfunc main(){r:=gin.Default();r.GET("/",func(c *gin.Context){c.JSON(200,gin.H{"ok":true,"service":${service}})});r.Run(":3000")}\n`},projectName,profile,technology,'go test ./...','go mod tidy','go run .','http://localhost:3000');
+  if (technology.id==='axum') return completeStarter({'Cargo.toml':`[package]\nname="${projectSlug(projectName)}"\nversion="0.1.0"\nedition="2021"\n[dependencies]\naxum="0.8"\ntokio={version="1",features=["full"]}\nserde_json="1"\n`,'src/main.rs':`use axum::{routing::get,Json,Router};\n#[tokio::main]\nasync fn main(){let app=Router::new().route("/",get(||async{Json(serde_json::json!({"ok":true,"service":${service}}))}));let listener=tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();axum::serve(listener,app).await.unwrap();}\n`},projectName,profile,technology,'cargo check','cargo build','cargo run','http://localhost:3000');
+  if (technology.id==='spring') return completeStarter({'pom.xml':`<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion><parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>3.5.0</version></parent><groupId>com.codeplus</groupId><artifactId>${projectSlug(projectName)}</artifactId><version>0.1.0</version><properties><java.version>21</java.version></properties><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency></dependencies><build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>\n`,'src/main/java/com/codeplus/app/Application.java':`package com.codeplus.app;\nimport java.util.Map;\nimport org.springframework.boot.SpringApplication;import org.springframework.boot.autoconfigure.SpringBootApplication;import org.springframework.web.bind.annotation.*;\n@SpringBootApplication @RestController public class Application { public static void main(String[] a){SpringApplication.run(Application.class,a);} @GetMapping("/") Map<String,Object> home(){return Map.of("ok",true,"service",${service});} }\n`,'src/main/resources/application.properties':'server.port=3000\n'},projectName,profile,technology,'mvn test','mvn dependency:go-offline','mvn spring-boot:run','http://localhost:3000');
+  if (technology.id==='ktor') return completeStarter({'settings.gradle.kts':`rootProject.name = "${projectSlug(projectName)}"\n`,'build.gradle.kts':`plugins { kotlin("jvm") version "2.1.20"; application }\nrepositories { mavenCentral() }\ndependencies { implementation("io.ktor:ktor-server-core:3.1.3"); implementation("io.ktor:ktor-server-netty:3.1.3") }\napplication { mainClass.set("com.codeplus.ApplicationKt") }\n`,'src/main/kotlin/com/codeplus/Application.kt':`package com.codeplus\nimport io.ktor.server.application.*;import io.ktor.server.engine.*;import io.ktor.server.netty.*;import io.ktor.server.response.*;import io.ktor.server.routing.*\nfun main()=embeddedServer(Netty,port=3000,host="0.0.0.0"){routing{get("/"){call.respondText("${projectName}")}}}.start(wait=true)\n`},projectName,profile,technology,'gradle test','gradle dependencies','gradle run','http://localhost:3000');
+  if (technology.id==='aspnet') return completeStarter({[`${projectSlug(projectName)}.csproj`]:`<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><TargetFramework>net9.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>\n`,'Program.cs':`var builder=WebApplication.CreateBuilder(args);var app=builder.Build();app.MapGet("/",()=>Results.Ok(new { ok=true, service=${service} }));app.Run("http://0.0.0.0:3000");\n`},projectName,profile,technology,'dotnet test','dotnet restore','dotnet run','http://localhost:3000');
+  if (technology.id==='laravel') return createLaravelProjectStarter(projectName,profile,technology);
+  if (technology.id==='rails') return createRailsProjectStarter(projectName,profile,technology);
+  if (technology.id==='phoenix') return createPhoenixProjectStarter(projectName,profile,technology);
+  return null;
+}
+
+function createLaravelProjectStarter(projectName, profile, technology) {
+  const files = {
+    'composer.json':`${JSON.stringify({name:`codeplus/${projectSlug(projectName)}`,type:'project',description:profile.description,require:{php:'^8.2','laravel/framework':'^12.0','laravel/tinker':'^2.10'},'require-dev':{'fakerphp/faker':'^1.23','laravel/pint':'^1.24','mockery/mockery':'^1.6','nunomaduro/collision':'^8.6','phpunit/phpunit':'^11.5'},autoload:{'psr-4':{'App\\':'app/','Database\\Factories\\':'database/factories/','Database\\Seeders\\':'database/seeders/'}},'autoload-dev':{'psr-4':{'Tests\\':'tests/'}},scripts:{test:'@php artisan test'}},null,2)}\n`,
+    'package.json':starterPackage(projectName,{dev:'php artisan serve --host=0.0.0.0 --port=3000',assets:'vite --host 0.0.0.0',build:'vite build',check:'composer test'},{},{'laravel-vite-plugin':'latest',vite:'latest'}),
+    'vite.config.js':`import { defineConfig } from 'vite';\nimport laravel from 'laravel-vite-plugin';\nexport default defineConfig({ plugins:[laravel({ input:['resources/css/app.css','resources/js/app.js'], refresh:true })] });\n`,
+    'artisan':`#!/usr/bin/env php\n<?php\nuse Illuminate\\Foundation\\Application;use Symfony\\Component\\Console\\Input\\ArgvInput;\ndefine('LARAVEL_START',microtime(true));require __DIR__.'/vendor/autoload.php';$status=(require_once __DIR__.'/bootstrap/app.php')->handleCommand(new ArgvInput);exit($status);\n`,
+    'bootstrap/app.php':`<?php\nuse Illuminate\\Foundation\\Application;use Illuminate\\Foundation\\Configuration\\Exceptions;use Illuminate\\Foundation\\Configuration\\Middleware;\nreturn Application::configure(basePath:dirname(__DIR__))->withRouting(web:__DIR__.'/../routes/web.php',commands:__DIR__.'/../routes/console.php',health:'/up')->withMiddleware(fn(Middleware $middleware)=>null)->withExceptions(fn(Exceptions $exceptions)=>null)->create();\n`,
+    'bootstrap/providers.php':`<?php\nreturn [App\\Providers\\AppServiceProvider::class];\n`,
+    'app/Providers/AppServiceProvider.php':`<?php\nnamespace App\\Providers;\nuse Illuminate\\Support\\ServiceProvider;\nclass AppServiceProvider extends ServiceProvider { public function register():void{} public function boot():void{} }\n`,
+    'routes/web.php':`<?php\nuse Illuminate\\Support\\Facades\\Route;\nRoute::view('/', 'welcome');\n`,
+    'routes/console.php':`<?php\nuse Illuminate\\Support\\Facades\\Artisan;\nArtisan::command('inspire',fn()=> $this->comment('Build ${projectName} with care.'));\n`,
+    'resources/views/welcome.blade.php':`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${projectName}</title><style>body{font-family:system-ui;margin:0;padding:10vh 8vw;background:#0b101b;color:#f7f9ff}main{max-width:760px}h1{font-size:clamp(3rem,8vw,6rem);line-height:.95}p{color:#aab3c8}</style></head><body>${starterMarkup(projectName,profile)}</body></html>\n`,
+    'resources/css/app.css':`@import url('https://fonts.bunny.net/css?family=instrument-sans:400,600,700');\n`,
+    'resources/js/app.js':`console.info(${JSON.stringify(`${projectName} ready`)});\n`,
+    'public/index.php':`<?php\nuse Illuminate\\Http\\Request;\ndefine('LARAVEL_START',microtime(true));require __DIR__.'/../vendor/autoload.php';(require_once __DIR__.'/../bootstrap/app.php')->handleRequest(Request::capture());\n`,
+    'config/app.php':`<?php\nreturn ['name'=>env('APP_NAME',${JSON.stringify(projectName)}),'env'=>env('APP_ENV','production'),'debug'=>(bool)env('APP_DEBUG',false),'url'=>env('APP_URL','http://localhost'),'timezone'=>'UTC','locale'=>env('APP_LOCALE','en'),'fallback_locale'=>'en','cipher'=>'AES-256-CBC','key'=>env('APP_KEY'),'maintenance'=>['driver'=>'file']];\n`,
+    '.env.example':`APP_NAME="${projectName}"\nAPP_ENV=local\nAPP_KEY=\nAPP_DEBUG=true\nAPP_URL=http://localhost:3000\nLOG_CHANNEL=stack\nDB_CONNECTION=sqlite\nSESSION_DRIVER=file\nCACHE_STORE=file\nQUEUE_CONNECTION=sync\n`,
+    'database/migrations/0001_01_01_000000_create_users_table.php':`<?php\nuse Illuminate\\Database\\Migrations\\Migration;use Illuminate\\Database\\Schema\\Blueprint;use Illuminate\\Support\\Facades\\Schema;\nreturn new class extends Migration { public function up():void { Schema::create('users',fn(Blueprint $table)=>tap($table,function(Blueprint $table){$table->id();$table->string('name');$table->string('email')->unique();$table->timestamps();})); } public function down():void { Schema::dropIfExists('users'); } };\n`,
+    'bootstrap/cache/.gitignore':`*\n!.gitignore\n`,
+    'storage/framework/cache/.gitignore':`*\n!.gitignore\n`,
+    'storage/framework/sessions/.gitignore':`*\n!.gitignore\n`,
+    'storage/framework/views/.gitignore':`*\n!.gitignore\n`,
+    'storage/logs/.gitignore':`*\n!.gitignore\n`,
+    'database/database.sqlite':'','tests/Feature/HomePageTest.php':`<?php\nnamespace Tests\\Feature;\nuse Tests\\TestCase;\nclass HomePageTest extends TestCase { public function test_home_page_is_available():void{$this->get('/')->assertOk();} }\n`,
+    'tests/TestCase.php':`<?php\nnamespace Tests;\nuse Illuminate\\Foundation\\Testing\\TestCase as BaseTestCase;\nabstract class TestCase extends BaseTestCase {}\n`,
+    'phpunit.xml':`<?xml version="1.0" encoding="UTF-8"?><phpunit bootstrap="vendor/autoload.php"><testsuites><testsuite name="Application"><directory>tests</directory></testsuite></testsuites><php><env name="APP_ENV" value="testing"/><env name="DB_CONNECTION" value="sqlite"/><env name="DB_DATABASE" value=":memory:"/></php></phpunit>\n`
+  };
+  return completeStarter(files,projectName,profile,technology,'composer test','composer install && cp .env.example .env && php artisan key:generate','php artisan serve --host=0.0.0.0 --port=3000','http://localhost:3000');
+}
+
+function createRailsProjectStarter(projectName, profile, technology) {
+  const moduleName=projectSlug(projectName).split('-').map(part=>part[0]?.toUpperCase()+part.slice(1)).join('') || 'CodePlusApp';
+  const files={
+    'Gemfile':`source "https://rubygems.org"\ngem "rails", "~> 8.0"\ngem "sqlite3", ">= 2.1"\ngem "puma", ">= 6.0"\n`,
+    'config.ru':`require_relative "config/environment"\nrun Rails.application\nRails.application.load_server\n`,
+    'Rakefile':`require_relative "config/application"\nRails.application.load_tasks\n`,
+    'bin/rails':`#!/usr/bin/env ruby\nAPP_PATH = File.expand_path("../config/application", __dir__)\nrequire_relative "../config/boot"\nrequire "rails/commands"\n`,
+    'config/boot.rb':`ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)\nrequire "bundler/setup"\n`,
+    'config/application.rb':`require_relative "boot"\nrequire "rails/all"\nBundler.require(*Rails.groups)\nmodule ${moduleName}; class Application < Rails::Application; config.load_defaults 8.0; end; end\n`,
+    'config/environment.rb':`require_relative "application"\nRails.application.initialize!\n`,
+    'config/routes.rb':`Rails.application.routes.draw do\n  root "home#index"\n  get "up" => "rails/health#show", as: :rails_health_check\nend\n`,
+    'app/controllers/application_controller.rb':`class ApplicationController < ActionController::Base; end\n`,
+    'app/controllers/home_controller.rb':`class HomeController < ApplicationController; def index; end; end\n`,
+    'app/views/home/index.html.erb':`${starterMarkup(projectName,profile)}\n`,
+    'app/views/layouts/application.html.erb':`<!doctype html><html><head><title>${projectName}</title><meta name="viewport" content="width=device-width,initial-scale=1"><%= csrf_meta_tags %></head><body><%= yield %></body></html>\n`,
+    'config/database.yml':`default: &default\n  adapter: sqlite3\n  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>\ndevelopment:\n  <<: *default\n  database: storage/development.sqlite3\ntest:\n  <<: *default\n  database: storage/test.sqlite3\n`,
+    'storage/.gitignore':`*\n!.gitignore\n`
+  };
+  return completeStarter(files,projectName,profile,technology,'bin/rails test','bundle install && bin/rails db:prepare','bin/rails server -p 3000','http://localhost:3000');
+}
+
+function createPhoenixProjectStarter(projectName, profile, technology) {
+  const otp=projectSlug(projectName).replace(/-/g,'_');
+  const moduleName=otp.split('_').map(part=>part[0]?.toUpperCase()+part.slice(1)).join('') || 'Codeplus';
+  const files={
+    'mix.exs':`defmodule ${moduleName}.MixProject do\n  use Mix.Project\n  def project, do: [app: :${otp}, version: "0.1.0", elixir: "~> 1.17", start_permanent: Mix.env()==:prod, deps: deps()]\n  def application, do: [mod: {${moduleName}.Application, []}, extra_applications: [:logger, :runtime_tools]]\n  defp deps, do: [{:phoenix, "~> 1.7.20"}, {:phoenix_html, "~> 4.1"}, {:bandit, "~> 1.5"}, {:jason, "~> 1.4"}]\nend\n`,
+    [`lib/${otp}/application.ex`]:`defmodule ${moduleName}.Application do\n  use Application\n  def start(_type,_args), do: Supervisor.start_link([{Phoenix.PubSub, name: ${moduleName}.PubSub}, ${moduleName}Web.Endpoint], strategy: :one_for_one, name: ${moduleName}.Supervisor)\nend\n`,
+    [`lib/${otp}_web/endpoint.ex`]:`defmodule ${moduleName}Web.Endpoint do\n  use Phoenix.Endpoint, otp_app: :${otp}\n  plug Plug.Static, at: "/", from: :${otp}\n  plug Plug.RequestId\n  plug Plug.Parsers, parsers: [:urlencoded,:multipart,:json], pass: ["*/*"], json_decoder: Phoenix.json_library()\n  plug ${moduleName}Web.Router\nend\n`,
+    'lib/codeplus_web/router.ex':`defmodule ${moduleName}Web.Router do\n  use Phoenix.Router\n  pipeline :browser do plug :accepts,["html"] end\n  scope "/", ${moduleName}Web do\n    pipe_through :browser\n    get "/", PageController, :home\n  end\nend\n`,
+    [`lib/${otp}_web/controllers/page_controller.ex`]:`defmodule ${moduleName}Web.PageController do\n  use Phoenix.Controller, formats: [:html]\n  def home(conn,_params), do: html(conn, ${JSON.stringify(`<h1>${profile.headline}</h1><p>${profile.description}</p>`)})\nend\n`,
+    [`lib/${otp}_web/controllers/error_html.ex`]:`defmodule ${moduleName}Web.ErrorHTML do\n  use Phoenix.Component\n  def render(template, _assigns), do: Phoenix.Controller.status_message_from_template(template)\nend\n`,
+    'config/config.exs':`import Config\nconfig :${otp}, ${moduleName}Web.Endpoint, url: [host: "localhost"], http: [ip: {0,0,0,0}, port: 3000], server: true, secret_key_base: String.duplicate("a",64), render_errors: [formats: [html: ${moduleName}Web.ErrorHTML], layout: false], pubsub_server: ${moduleName}.PubSub\nconfig :phoenix, :json_library, Jason\n`
+  };
+  return completeStarter(files,projectName,profile,technology,'mix test','mix deps.get','mix phx.server','http://localhost:3000');
+}
+
+function createMobileDesktopStarter(projectName, profile, technology) {
+  const id=technology.id;
+  if (['react-native','expo'].includes(id)) {
+    const expo=id==='expo';
+    const files={
+      'package.json':starterPackage(projectName,{start:expo?'expo start':'react-native start',android:expo?'expo start --android':'react-native run-android',ios:expo?'expo start --ios':'react-native run-ios',check:'tsc --noEmit'},expo?{expo:'latest','expo-status-bar':'latest',react:'latest','react-native':'latest'}:{react:'latest','react-native':'latest'},{typescript:'latest','@types/react':'latest'}),
+      'App.tsx':`import { SafeAreaView,StyleSheet,Text,View } from 'react-native';\n${expo?"import { StatusBar } from 'expo-status-bar';\n":''}export default function App(){return <SafeAreaView style={styles.screen}><View><Text style={styles.kicker}>${profile.eyebrow}</Text><Text style={styles.title}>${profile.headline}</Text><Text style={styles.copy}>${profile.description}</Text></View>${expo?'<StatusBar style="light"/>':''}</SafeAreaView>}\nconst styles=StyleSheet.create({screen:{flex:1,justifyContent:'center',padding:32,backgroundColor:'#0b101b'},kicker:{color:'${profile.accent}',fontWeight:'700'},title:{marginTop:16,color:'#fff',fontSize:42,fontWeight:'800'},copy:{marginTop:18,color:'#aab3c8',fontSize:17,lineHeight:26}});\n`,
+      'tsconfig.json':`{"compilerOptions":{"strict":true,"jsx":"react-jsx","moduleResolution":"bundler","allowSyntheticDefaultImports":true,"skipLibCheck":true},"include":["**/*.ts","**/*.tsx"]}\n`
+    };
+    if(expo) files['app.json']=`${JSON.stringify({expo:{name:projectName,slug:projectSlug(projectName),version:'0.1.0',orientation:'portrait',userInterfaceStyle:'automatic'}},null,2)}\n`;
+    return completeStarter(files,projectName,profile,technology,'npm run check','npm install','npm start');
+  }
+  if(id==='flutter') return completeStarter({'pubspec.yaml':`name: ${projectSlug(projectName).replace(/-/g,'_')}\ndescription: ${profile.description}\nversion: 0.1.0+1\nenvironment:\n  sdk: ">=3.6.0 <4.0.0"\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n  flutter_lints: ^5.0.0\nflutter:\n  uses-material-design: true\n`,'analysis_options.yaml':`include: package:flutter_lints/flutter.yaml\n`,'lib/main.dart':`import 'package:flutter/material.dart';\nvoid main()=>runApp(const App());\nclass App extends StatelessWidget{const App({super.key});@override Widget build(BuildContext context)=>MaterialApp(title:${JSON.stringify(projectName)},theme:ThemeData.dark(),home:Scaffold(body:Center(child:Padding(padding:const EdgeInsets.all(32),child:Column(mainAxisSize:MainAxisSize.min,children:[Text(${JSON.stringify(profile.headline)},style:Theme.of(context).textTheme.displaySmall),const SizedBox(height:16),Text(${JSON.stringify(profile.description)})])))));}\n`,'test/widget_test.dart':`import 'package:flutter_test/flutter_test.dart';import 'package:${projectSlug(projectName).replace(/-/g,'_')}/main.dart';void main(){testWidgets('shows headline',(tester)async{await tester.pumpWidget(const App());expect(find.text(${JSON.stringify(profile.headline)}),findsOneWidget);});}\n`},projectName,profile,technology,'flutter test','flutter pub get','flutter run');
+  if(id==='swiftui') return completeStarter({'Package.swift':`// swift-tools-version: 6.0\nimport PackageDescription\nlet package=Package(name:${JSON.stringify(projectName)},platforms:[.macOS(.v14)],products:[.executable(name:${JSON.stringify(projectSlug(projectName))},targets:["App"])],targets:[.executableTarget(name:"App"),.testTarget(name:"AppTests",dependencies:["App"])])\n`,'Sources/App/App.swift':`import SwiftUI\n@main struct CodePlusApp: App { var body: some Scene { WindowGroup { ContentView() } } }\nstruct ContentView: View { var body: some View { VStack(spacing:16){Text(${JSON.stringify(profile.eyebrow)}).font(.caption);Text(${JSON.stringify(profile.headline)}).font(.largeTitle.bold());Text(${JSON.stringify(profile.description)}).foregroundStyle(.secondary)}.padding(32).frame(minWidth:640,minHeight:420) } }\n`},projectName,profile,technology,'swift test','swift package resolve','swift run');
+  if(id==='android') return completeStarter({'settings.gradle.kts':`pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories{google();mavenCentral()} }\nrootProject.name=${JSON.stringify(projectName)}\ninclude(":app")\n`,'build.gradle.kts':`plugins { id("com.android.application") version "8.9.0" apply false; id("org.jetbrains.kotlin.android") version "2.1.20" apply false }\n`,'app/build.gradle.kts':`plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }\nandroid { namespace="com.codeplus"; compileSdk=35\n defaultConfig { applicationId="com.codeplus.${projectSlug(projectName).replace(/-/g,'')}"; minSdk=26; targetSdk=35; versionCode=1; versionName="0.1.0" } }\n`,'app/src/main/AndroidManifest.xml':`<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:theme="@style/AppTheme" android:label="${projectName}"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>\n`,'app/src/main/java/com/codeplus/MainActivity.kt':`package com.codeplus\nimport android.app.Activity;import android.os.Bundle;import android.widget.TextView\nclass MainActivity:Activity(){override fun onCreate(state:Bundle?){super.onCreate(state);setContentView(TextView(this).apply{text=${JSON.stringify(profile.headline)};textSize=28f;setPadding(48,96,48,48)})}}\n`,'app/src/main/res/values/styles.xml':`<resources><style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar"/></resources>\n`},projectName,profile,technology,'gradle test','gradle dependencies','gradle installDebug');
+  if(id==='electron') return completeStarter({'package.json':starterPackage(projectName,{dev:'electron .',start:'electron .',check:'node --check src/main.js && node --check src/preload.js'},{electron:'latest'},{}),'src/main.js':`import { app,BrowserWindow } from 'electron';import path from 'node:path';import { fileURLToPath } from 'node:url';\nconst root=path.dirname(fileURLToPath(import.meta.url));app.whenReady().then(()=>{const win=new BrowserWindow({width:1100,height:760,webPreferences:{preload:path.join(root,'preload.js'),contextIsolation:true,sandbox:true}});win.loadFile(path.join(root,'../renderer/index.html'));});\n`,'src/preload.js':`import { contextBridge } from 'electron';contextBridge.exposeInMainWorld('codeplus',{platform:process.platform});\n`,'renderer/index.html':`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${projectName}</title></head><body>${starterMarkup(projectName,profile)}</body></html>\n`},projectName,profile,technology,'npm run check','npm install','npm run dev');
+  if(id==='tauri') return completeStarter({'package.json':starterPackage(projectName,{dev:'vite --host 0.0.0.0',build:'vite build',tauri:'tauri'},{},{'@tauri-apps/cli':'latest',vite:'latest'}),'index.html':`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${projectName}</title></head><body>${starterMarkup(projectName,profile)}<script type="module" src="/src/main.js"></script></body></html>\n`,'src/main.js':`console.info(${JSON.stringify(`${projectName} desktop ready`)});\n`,'src-tauri/Cargo.toml':`[package]\nname="${projectSlug(projectName)}"\nversion="0.1.0"\nedition="2021"\n[build-dependencies]\ntauri-build={version="2"}\n[dependencies]\ntauri={version="2"}\n`,'src-tauri/build.rs':'fn main(){tauri_build::build()}\n','src-tauri/src/main.rs':`fn main(){tauri::Builder::default().run(tauri::generate_context!()).expect("Tauri application error");}\n`,'src-tauri/tauri.conf.json':`${JSON.stringify({productName:projectName,version:'0.1.0',identifier:`com.codeplus.${projectSlug(projectName).replace(/-/g,'')}`,build:{beforeDevCommand:'npm run dev',devUrl:'http://localhost:5173',beforeBuildCommand:'npm run build',frontendDist:'../dist'},app:{windows:[{title:projectName,width:1100,height:760}]},bundle:{active:true}},null,2)}\n`},projectName,profile,technology,'cargo check --manifest-path src-tauri/Cargo.toml','npm install && cargo build --manifest-path src-tauri/Cargo.toml','npm run tauri dev');
+  return null;
+}
+
+function createDataServiceStarter(projectName, profile, technology) {
+  const slug=projectSlug(projectName).replace(/-/g,'_');
+  if(technology.id==='postgresql') return completeStarter({'compose.yaml':`services:\n  db:\n    image: postgres:17-alpine\n    environment:\n      POSTGRES_DB: ${slug}\n      POSTGRES_USER: app\n      POSTGRES_PASSWORD: local-development-only\n    ports: ["5432:5432"]\n    volumes: ["./db:/docker-entrypoint-initdb.d:ro", "postgres-data:/var/lib/postgresql/data"]\nvolumes: { postgres-data: {} }\n`,'db/schema.sql':`CREATE TABLE IF NOT EXISTS items (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,name text NOT NULL,created_at timestamptz NOT NULL DEFAULT now());\n`,'db/seed.sql':`INSERT INTO items(name) VALUES ('Welcome to ${projectName}');\n`},projectName,profile,technology,'docker compose config','docker compose pull','docker compose up','postgresql://app:local-development-only@localhost:5432/'+slug);
+  if(technology.id==='supabase') return completeStarter({'supabase/config.toml':`project_id = "${projectSlug(projectName)}"\n[api]\nport = 54321\n[db]\nport = 54322\nmajor_version = 17\n`,'supabase/migrations/0001_initial.sql':`create table public.items (id bigint generated by default as identity primary key,name text not null,created_at timestamptz not null default now());\nalter table public.items enable row level security;\ncreate policy "public read" on public.items for select using (true);\n`,'supabase/seed.sql':`insert into public.items(name) values ('Welcome to ${projectName}');\n`},projectName,profile,technology,'supabase db lint','supabase init','supabase start','http://localhost:54323');
+  if(technology.id==='firebase') return completeStarter({'firebase.json':`${JSON.stringify({functions:{source:'functions'},emulators:{functions:{port:5001},ui:{enabled:true,port:4000}}},null,2)}\n`,'.firebaserc':`{"projects":{"default":"demo-${projectSlug(projectName)}"}}\n`,'functions/package.json':starterPackage(`${projectName} functions`,{build:'tsc',dev:'npm run build && firebase emulators:start',check:'tsc --noEmit'},{'firebase-admin':'latest','firebase-functions':'latest'},{typescript:'latest'}),'functions/tsconfig.json':`{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext","target":"ES2022","outDir":"lib","strict":true},"include":["src"]}\n`,'functions/src/index.ts':`import { onRequest } from 'firebase-functions/v2/https';\nexport const health=onRequest((_request,response)=>response.json({ok:true,service:${JSON.stringify(projectName)}}));\n`},projectName,profile,technology,'cd functions && npm run check','cd functions && npm install','cd functions && npm run dev','http://localhost:4000');
+  if(technology.id==='mongodb') return completeStarter({'package.json':starterPackage(projectName,{dev:'node --watch src/index.js',start:'node src/index.js',check:'node --check src/index.js'},{mongodb:'latest'},{ }),'compose.yaml':`services:\n  db:\n    image: mongo:8\n    ports: ["27017:27017"]\n    volumes: ["mongo-data:/data/db"]\nvolumes: { mongo-data: {} }\n`,'src/index.js':`import { MongoClient } from 'mongodb';\nconst client=new MongoClient(process.env.MONGODB_URL||'mongodb://localhost:27017');await client.connect();const db=client.db(${JSON.stringify(slug)});await db.collection('items').createIndex({name:1});console.log('MongoDB ready:',db.databaseName);\n`,'.env.example':'MONGODB_URL=mongodb://localhost:27017\n'},projectName,profile,technology,'npm run check','npm install && docker compose up -d','npm run dev');
+  if(technology.id==='prisma') return completeStarter({'package.json':starterPackage(projectName,{dev:'tsx watch src/index.ts',start:'tsx src/index.ts',check:'prisma validate && tsc --noEmit',migrate:'prisma migrate dev'},{'@prisma/client':'latest'},{prisma:'latest',tsx:'latest',typescript:'latest'}),'prisma/schema.prisma':`generator client {\n  provider = "prisma-client-js"\n}\n\ndatasource db {\n  provider = "sqlite"\n  url      = env("DATABASE_URL")\n}\n\nmodel Item {\n  id        Int      @id @default(autoincrement())\n  name      String\n  createdAt DateTime @default(now())\n}\n`,'src/index.ts':`import { PrismaClient } from '@prisma/client';const db=new PrismaClient();console.log(await db.item.findMany());await db.$disconnect();\n`,'.env.example':'DATABASE_URL="file:./dev.db"\n'},projectName,profile,technology,'npm run check','npm install && cp .env.example .env && npm run migrate','npm run dev');
+  if(technology.id==='drizzle') return completeStarter({'package.json':starterPackage(projectName,{dev:'tsx watch src/index.ts',start:'tsx src/index.ts',check:'tsc --noEmit',migrate:'drizzle-kit push'},{'better-sqlite3':'latest','drizzle-orm':'latest'},{'@types/better-sqlite3':'latest','drizzle-kit':'latest',tsx:'latest',typescript:'latest'}),'drizzle.config.ts':`import { defineConfig } from 'drizzle-kit';export default defineConfig({schema:'./src/schema.ts',out:'./drizzle',dialect:'sqlite',dbCredentials:{url:'./local.db'}});\n`,'src/schema.ts':`import { integer,sqliteTable,text } from 'drizzle-orm/sqlite-core';export const items=sqliteTable('items',{id:integer('id').primaryKey({autoIncrement:true}),name:text('name').notNull()});\n`,'src/index.ts':`import Database from 'better-sqlite3';import { drizzle } from 'drizzle-orm/better-sqlite3';import { items } from './schema';const db=drizzle(new Database('local.db'));console.log(db.select().from(items).all());\n`},projectName,profile,technology,'npm run check','npm install && npm run migrate','npm run dev');
+  if(technology.id==='sqlite') return completeStarter({'db/schema.sql':`CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);\n`,'src/main.py':`from pathlib import Path\nimport sqlite3\ndb=sqlite3.connect(Path(__file__).parents[1]/"app.db")\ndb.executescript((Path(__file__).parents[1]/"db/schema.sql").read_text())\ndb.execute("insert into items(name) values (?)",(${JSON.stringify(`Welcome to ${projectName}`)},))\ndb.commit()\nprint(db.execute("select * from items").fetchall())\n`},projectName,profile,technology,'python3 -m compileall src','python3 --version','python3 src/main.py');
+  return null;
+}
+
+function createLanguageProjectStarter(projectName, profile, technology) {
+  const id=technology.id;
+  const files={ [technology.entry]:starterLanguageSource(projectName,technology) };
+  const recipes={
+    typescript:{install:'npm install',run:'npm run dev',check:'npm run check',files:{'package.json':starterPackage(projectName,{dev:'tsx watch src/main.ts',start:'tsx src/main.ts',check:'tsc --noEmit'},{},{tsx:'latest',typescript:'latest'}),'tsconfig.json':`{"compilerOptions":{"target":"ES2022","module":"NodeNext","moduleResolution":"NodeNext","strict":true,"noEmit":true},"include":["src"]}\n`}},
+    javascript:{install:'npm install',run:'npm start',check:'npm run check',files:{'package.json':starterPackage(projectName,{start:'node src/main.js',dev:'node --watch src/main.js',check:'node --check src/main.js'})}},
+    python:{install:'python3 -m venv .venv && source .venv/bin/activate && pip install -e .',run:'python3 -m src.main',check:'python3 -m compileall src',files:{'pyproject.toml':`[build-system]\nrequires=["setuptools>=75"]\nbuild-backend="setuptools.build_meta"\n[project]\nname="${projectSlug(projectName)}"\nversion="0.1.0"\nrequires-python=">=3.11"\n`,'src/__init__.py':''}},
+    go:{install:'go mod tidy',run:'go run ./src',check:'go test ./...',files:{'go.mod':`module ${projectSlug(projectName)}\n\ngo 1.23\n`}},
+    rust:{install:'cargo build',run:'cargo run',check:'cargo clippy -- -D warnings',files:{'Cargo.toml':`[package]\nname="${projectSlug(projectName)}"\nversion="0.1.0"\nedition="2021"\n[dependencies]\n`}},
+    java:{install:'mvn compile',run:'mvn exec:java',check:'mvn test',files:{'pom.xml':`<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion><groupId>com.codeplus</groupId><artifactId>${projectSlug(projectName)}</artifactId><version>0.1.0</version><properties><maven.compiler.release>21</maven.compiler.release></properties><build><sourceDirectory>src</sourceDirectory><plugins><plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.5.0</version><configuration><mainClass>Main</mainClass></configuration></plugin></plugins></build></project>\n`}},
+    kotlin:{install:'gradle dependencies',run:'gradle run',check:'gradle test',files:{'settings.gradle.kts':`rootProject.name=${JSON.stringify(projectName)}\n`,'build.gradle.kts':`plugins { kotlin("jvm") version "2.1.20"; application }\nrepositories { mavenCentral() }\nkotlin { jvmToolchain(21) }\nsourceSets.main { kotlin.srcDir("src") }\napplication { mainClass.set("MainKt") }\n`}},
+    csharp:{install:'dotnet restore',run:'dotnet run',check:'dotnet build --warnaserror',files:{[`${projectSlug(projectName)}.csproj`]:`<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Project>\n`}},
+    cpp:{install:'cmake -S . -B build',run:'cmake --build build && ./build/app',check:'cmake --build build',files:{'CMakeLists.txt':`cmake_minimum_required(VERSION 3.20)\nproject(${projectSlug(projectName)} LANGUAGES CXX)\nset(CMAKE_CXX_STANDARD 20)\nadd_executable(app src/main.cpp)\ntarget_compile_options(app PRIVATE -Wall -Wextra -Wpedantic)\n`}},
+    c:{install:'cmake -S . -B build',run:'cmake --build build && ./build/app',check:'cmake --build build',files:{'CMakeLists.txt':`cmake_minimum_required(VERSION 3.20)\nproject(${projectSlug(projectName)} LANGUAGES C)\nset(CMAKE_C_STANDARD 17)\nadd_executable(app src/main.c)\ntarget_compile_options(app PRIVATE -Wall -Wextra -Wpedantic)\n`}},
+    swift:{install:'swift package resolve',run:'swift run',check:'swift test',files:{'Package.swift':`// swift-tools-version: 6.0\nimport PackageDescription\nlet package=Package(name:${JSON.stringify(projectName)},products:[.executable(name:"app",targets:["App"])],targets:[.executableTarget(name:"App",path:"src")])\n`}},
+    dart:{install:'dart pub get',run:'dart run src/main.dart',check:'dart analyze',files:{'pubspec.yaml':`name: ${projectSlug(projectName).replace(/-/g,'_')}\ndescription: ${profile.description}\nversion: 0.1.0\nenvironment:\n  sdk: ^3.6.0\ndev_dependencies:\n  lints: ^5.1.0\n`,'analysis_options.yaml':'include: package:lints/recommended.yaml\n'}},
+    php:{install:'composer install',run:'php src/index.php',check:'composer check',files:{'composer.json':`${JSON.stringify({name:`codeplus/${projectSlug(projectName)}`,require:{php:'^8.2'},autoload:{'psr-4':{'App\\':'src/'}},scripts:{check:'php -l src/index.php'}},null,2)}\n`}},
+    ruby:{install:'bundle install',run:'bundle exec ruby src/main.rb',check:'bundle exec ruby -c src/main.rb',files:{'Gemfile':'source "https://rubygems.org"\ngem "rake", "~> 13.2"\n','Rakefile':`task :default do\n  ruby "src/main.rb"\nend\n`}},
+    elixir:{install:'mix deps.get',run:'mix run src/main.exs',check:'mix test',files:{'mix.exs':`defmodule CodePlus.MixProject do\n use Mix.Project\n def project, do: [app: :${projectSlug(projectName).replace(/-/g,'_')}, version: "0.1.0", elixir: "~> 1.17", deps: []]\n def application, do: [extra_applications: [:logger]]\nend\n`}},
+    scala:{install:'sbt compile',run:'sbt run',check:'sbt test',files:{'build.sbt':`scalaVersion := "3.6.4"\nCompile / unmanagedSourceDirectories += baseDirectory.value / "src"\n`,'project/build.properties':'sbt.version=1.10.11\n'}},
+    r:{install:'Rscript -e "if (!requireNamespace(\'renv\', quietly=TRUE)) install.packages(\'renv\'); renv::restore()"',run:'Rscript src/main.R',check:'Rscript -e "parse(file=\'src/main.R\')"',files:{'DESCRIPTION':`Package: ${projectSlug(projectName).replace(/-/g,'')}\nTitle: ${projectName}\nVersion: 0.1.0\nDescription: ${profile.description}\nLicense: MIT\nEncoding: UTF-8\n`}},
+    julia:{install:'julia --project -e "using Pkg; Pkg.instantiate()"',run:'julia --project src/main.jl',check:'julia --project -e "include(\'src/main.jl\')"',files:{'Project.toml':`name = ${JSON.stringify(projectName)}\nuuid = "00000000-0000-4000-8000-000000000001"\nversion = "0.1.0"\n`}},
+    lua:{install:'luarocks install --only-deps codeplus-dev-1.0-1.rockspec',run:'lua src/main.lua',check:'luac -p src/main.lua',files:{'codeplus-dev-1.0-1.rockspec':`package="codeplus-dev"\nversion="1.0-1"\nsource={url="git://example.invalid/${projectSlug(projectName)}"}\nbuild={type="builtin",modules={}}\n`}},
+    bash:{install:'make check',run:'bash src/main.sh',check:'make check',files:{'Makefile':`run:\n\tbash src/main.sh\ncheck:\n\tbash -n src/main.sh\n`}},
+    powershell:{install:'pwsh -NoProfile -Command "Test-ModuleManifest ./CodePlus.psd1"',run:'pwsh -File src/main.ps1',check:'pwsh -NoProfile -Command "& { $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile(\'src/main.ps1\',[ref]$null,[ref]$errors); if($errors){exit 1} }"',files:{'CodePlus.psd1':`@{ RootModule='src/main.ps1'; ModuleVersion='0.1.0'; GUID='00000000-0000-4000-8000-000000000001'; Author='CodePlus' }\n`}},
+    solidity:{install:'npm install',run:'npm test',check:'npm test',files:{'package.json':starterPackage(projectName,{test:'hardhat test',compile:'hardhat compile'},{},{hardhat:'latest',typescript:'latest'}),'hardhat.config.ts':`import { HardhatUserConfig } from 'hardhat/config';const config:HardhatUserConfig={solidity:'0.8.24'};export default config;\n`}},
+    zig:{install:'zig build',run:'zig build run',check:'zig build test',files:{'build.zig':`const std=@import("std");pub fn build(b:*std.Build)void{const target=b.standardTargetOptions(.{});const optimize=b.standardOptimizeOption(.{});const exe=b.addExecutable(.{.name="app",.root_module=b.createModule(.{.root_source_file=b.path("src/main.zig"),.target=target,.optimize=optimize})});b.installArtifact(exe);const run=b.addRunArtifact(exe);b.step("run","Run").dependOn(&run.step);}\n`}}
+  };
+  const recipe=recipes[id];
+  if(!recipe) return null;
+  Object.assign(files,recipe.files);
+  return completeStarter(files,projectName,profile,technology,recipe.check,recipe.install,recipe.run);
+}
+
+function starterLanguageSource(projectName, technology) {
+  const name = JSON.stringify(projectName);
+  const sources = {
+    ts:`const projectName: string = ${name};\nconsole.log(\`Welcome to \${projectName}\`);\n`,
+    js:`const projectName = ${name};\nconsole.log(\`Welcome to \${projectName}\`);\n`,
+    py:`project_name = ${name}\nprint(f"Welcome to {project_name}")\n`,
+    go:`package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Welcome to", ${name})\n}\n`,
+    rs:`fn main() {\n    println!("Welcome to ${projectName.replace(/"/g, '\\"')}");\n}\n`,
+    java:`public class Main {\n    public static void main(String[] args) {\n        System.out.println("Welcome to ${projectName.replace(/"/g, '\\"')}");\n    }\n}\n`,
+    kt:`fun main() {\n    println("Welcome to ${projectName.replace(/"/g, '\\"')}")\n}\n`,
+    cs:`using System;\n\nConsole.WriteLine("Welcome to ${projectName.replace(/"/g, '\\"')}");\n`,
+    cpp:`#include <iostream>\n\nint main() {\n    std::cout << "Welcome to ${projectName.replace(/"/g, '\\"')}\\n";\n    return 0;\n}\n`,
+    c:`#include <stdio.h>\n\nint main(void) {\n    puts("Welcome to ${projectName.replace(/"/g, '\\"')}");\n    return 0;\n}\n`,
+    swift:`let projectName = ${name}\nprint("Welcome to \\(projectName)")\n`,
+    dart:`void main() {\n  const projectName = ${name};\n  print('Welcome to $projectName');\n}\n`,
+    php:`<?php\n\n$projectName = ${name};\necho "Welcome to {$projectName}\\n";\n`,
+    rb:`project_name = ${name}\nputs "Welcome to #{project_name}"\n`,
+    exs:`project_name = ${name}\nIO.puts("Welcome to #{project_name}")\n`,
+    scala:`@main def run(): Unit =\n  val projectName = ${name}\n  println(s"Welcome to $projectName")\n`,
+    R:`project_name <- ${name}\nprint(paste("Welcome to", project_name))\n`,
+    jl:`project_name = ${name}\nprintln("Welcome to ", project_name)\n`,
+    lua:`local project_name = ${name}\nprint("Welcome to " .. project_name)\n`,
+    sh:`#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' 'Welcome to ${projectName.replace(/'/g, "'\\''")}'\n`,
+    ps1:`$projectName = ${name}\nWrite-Output "Welcome to $projectName"\n`,
+    sol:`// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\ncontract Main {\n    string public constant projectName = ${name};\n}\n`,
+    zig:`const std = @import("std");\n\npub fn main() void {\n    std.debug.print("Welcome to ${projectName.replace(/[{}]/g, '')}\\n", .{});\n}\n`
+  };
+  return sources[technology.extension] || `// ${projectName}\n`;
+}
+
+function createGuidedProjectStarter(projectName, profile, technology) {
+  const files = {
+    'README.md': `# ${projectName}\n\nA CodePlus starter for **${technology.label}** (${technology.detail}). The repository includes a technology-specific brief so the Coding Agent can extend it without assuming Next.js.\n\n## Product direction\n\n${profile.description}\n\n## Next step\n\nOpen this project in CodePlus and ask the Coding Agent to implement the first feature. It will use AGENTS.md and codeplus.project.json as the source of truth for the selected stack.\n`,
+    'AGENTS.md': starterAgentBrief(projectName, profile, technology, 'the closest relevant build, lint, or test command for this stack'),
+    'codeplus.project.json': `${JSON.stringify({ name:projectName, slug:projectSlug(projectName), technology:{ id:technology.id, label:technology.label, group:technology.group, detail:technology.detail }, product:{ label:profile.label, description:profile.description, accent:profile.accent, accent2:profile.accent2 }, generatedBy:'CodePlus' }, null, 2)}\n`,
+    '.gitignore': `.DS_Store\n.env\n.env.*\n!.env.example\nnode_modules/\ndist/\nbuild/\n.venv/\n__pycache__/\ntarget/\n`
+  };
+  if (technology.extension) files[technology.entry] = starterLanguageSource(projectName, technology);
+  else files['PROJECT.md'] = `# ${technology.label} implementation brief\n\nBuild **${projectName}** with ${technology.label}. Use ${technology.detail.toLowerCase()} conventions, keep the first implementation small and runnable, and document exact setup and verification commands in README.md.\n\n## Initial experience\n\n- Message: ${profile.headline}\n- Purpose: ${profile.description}\n- Primary action: ${profile.primary}\n- Secondary action: ${profile.secondary}\n- Accent colors: ${profile.accent} and ${profile.accent2}\n`;
+  return files;
+}
+
+function ensureStarterContract(files, projectName, profile, technology) {
+  const presets = {
+    nextjs:{ install:'npm install', run:'npm run dev', check:'npm run build', url:'http://localhost:3000' },
+    react:{ install:'npm install', run:'npm run dev', check:'npm run build', url:'http://localhost:5173' },
+    static:{ install:'npm install', run:'npm run dev', check:'npm run build', url:'http://localhost:5173' },
+    express:{ install:'npm install', run:'npm run dev', check:'npm run check', url:'http://localhost:3000' },
+    fastapi:{ install:'python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt', run:'python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 3000', check:'python3 -m compileall app', url:'http://localhost:3000' }
+  };
+  const guide = technologyEngineeringGuide(technology);
+  const commands = presets[technology.id] || { install:guide.install, run:guide.run, check:'the closest relevant build, lint, or test command for this stack' };
+  files['README.md'] ||= starterReadme(projectName, profile, technology, commands.install, commands.run);
+  files['AGENTS.md'] ||= starterAgentBrief(projectName, profile, technology, commands.check);
+  files['codeplus.project.json'] ||= `${JSON.stringify({ name:projectName, slug:projectSlug(projectName), technology:{ id:technology.id, label:technology.label, group:technology.group, detail:technology.detail }, commands:{ install:commands.install, run:commands.run, check:commands.check }, runtime:projectRuntimeContract(technology,commands.install,commands.run,commands.check,commands.url), ...(commands.url ? { preview:{ url:commands.url } } : {}), product:{ label:profile.label, description:profile.description, accent:profile.accent, accent2:profile.accent2 }, generatedBy:'CodePlus' }, null, 2)}\n`;
+  files['.gitignore'] ||= `.DS_Store\n.env\n.env.*\n!.env.example\nnode_modules/\ndist/\nbuild/\n.next/\n.venv/\n__pycache__/\ntarget/\n`;
+  return files;
+}
+
+function createProjectStarter(name, technologyId='nextjs') {
+  const projectName = String(name || 'New CodePlus project').trim() || 'New CodePlus project';
+  const profile = projectStarterProfile(projectName);
+  const technology = projectTechnology(technologyId);
+  let generated;
+  if (technology.id === 'react') generated = createReactProjectStarter(projectName, profile);
+  else if (technology.id === 'static') generated = createStaticProjectStarter(projectName, profile);
+  else if (technology.id === 'express') generated = createExpressProjectStarter(projectName, profile);
+  else if (technology.id === 'fastapi') generated = createFastApiProjectStarter(projectName, profile);
+  else if (technology.id === 'nextjs') generated = createNextProjectStarter(projectName);
+  else generated = technology.group === 'Web frameworks'
+      ? createWebFrameworkStarter(projectName, profile, technology)
+      : technology.group === 'Backend & APIs'
+        ? createBackendProjectStarter(projectName, profile, technology)
+        : technology.group === 'Mobile & desktop'
+          ? createMobileDesktopStarter(projectName, profile, technology)
+          : technology.group === 'Data & services'
+            ? createDataServiceStarter(projectName, profile, technology)
+            : createLanguageProjectStarter(projectName, profile, technology);
+  return ensureStarterContract(generated || createGuidedProjectStarter(projectName, profile, technology), projectName, profile, technology);
 }
 const localModelCatalog = [
   { name: 'qwen3-coder:30b', title: 'Qwen3 Coder 30B A3B', size: '18 GB', description: 'Agentic coding specialist with strong tool calling.' },
@@ -135,7 +703,7 @@ const localModelCatalog = [
 ];
 const PROVIDERS = [
   { id: 'local', name: 'Ollama (local)', group: 'Local' },
-  { id: 'openai', name: 'OpenAI / Codex', group: 'Cloud', env: 'OPENAI_API_KEY', model: 'gpt-5', access: 'paid', accessNote: 'Paid API models — OpenAI API credits are required.', keyUrl: 'https://platform.openai.com/api-keys', modelsUrl: 'https://platform.openai.com/docs/models', models: [{id:'gpt-5',name:'GPT-5'},{id:'gpt-5-mini',name:'GPT-5 mini'},{id:'gpt-4.1',name:'GPT-4.1'},{id:'o4-mini',name:'o4-mini'}] },
+  { id: 'openai', name: 'OpenAI API', group: 'Cloud', env: 'OPENAI_API_KEY', model: 'gpt-5.6', access: 'paid', accessNote: 'Paid API models use separate OpenAI Platform usage-based billing.', keyUrl: 'https://platform.openai.com/api-keys', modelsUrl: 'https://developers.openai.com/api/docs/models', models: [{id:'gpt-6-astra',name:'GPT-6 Astra'},{id:'gpt-5.6',name:'GPT-5.6'},{id:'gpt-5.6-terra',name:'GPT-5.6 Terra'},{id:'gpt-5.6-luna',name:'GPT-5.6 Luna'}] },
   { id: 'anthropic', name: 'Anthropic Claude', group: 'Cloud', env: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-5', access: 'paid', accessNote: 'Paid API models — Anthropic usage credits are required.', keyUrl: 'https://console.anthropic.com/settings/keys', modelsUrl: 'https://docs.anthropic.com/en/docs/about-claude/models/overview', models: [{id:'claude-sonnet-4-5',name:'Claude Sonnet 4.5'},{id:'claude-opus-4-5',name:'Claude Opus 4.5'},{id:'claude-haiku-4-5',name:'Claude Haiku 4.5'}] },
   { id: 'gemini', name: 'Google Gemini', group: 'Cloud', env: 'GEMINI_API_KEY', model: 'gemini-3.6-flash', access: 'limited-free', accessNote: 'Limited free tier — quota and model access depend on your Google project and account.', keyUrl: 'https://aistudio.google.com/app/apikey', modelsUrl: 'https://ai.google.dev/gemini-api/docs/models', models: [{id:'gemini-3.6-flash',name:'Gemini 3.6 Flash',free:true},{id:'gemini-3.5-flash-lite',name:'Gemini 3.5 Flash-Lite',free:true}] },
   { id: 'groq', name: 'Groq', group: 'Cloud', env: 'GROQ_API_KEY', model: 'llama-3.3-70b-versatile', keyUrl: 'https://console.groq.com/keys', modelsUrl: 'https://console.groq.com/docs/models', models: [{id:'llama-3.3-70b-versatile',name:'Llama 3.3 70B Versatile',free:true},{id:'openai/gpt-oss-120b',name:'GPT-OSS 120B',free:true},{id:'openai/gpt-oss-20b',name:'GPT-OSS 20B',free:true}] },
@@ -165,13 +733,19 @@ const AGENT_TOOLS = [
   { type: 'function', function: { name: 'bash', description: 'Run a shell command in the project root. Timeout 30s.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
   { type: 'function', function: { name: 'glob', description: 'Find files by glob pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'grep', description: 'Search file contents with regex.', parameters: { type: 'object', properties: { pattern: { type: 'string' }, include: { type: 'string' } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'memory', description: 'Manage durable, project-scoped CodePlus memory. Store only stable preferences, decisions, and conventions; never secrets or transient progress.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['remember','forget','list'] }, fact: { type: 'string', description: 'Concise durable fact for remember/forget.' } }, required: ['action'] } } },
   { type: 'function', function: { name: 'todowrite', description: 'Track progress on multi-step tasks.', parameters: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string' }, status: { type: 'string', enum: ['pending','in_progress','completed','cancelled'] }, priority: { type: 'string', enum: ['high','medium','low'] } }, required: ['content','status','priority'] } } }, required: ['todos'] } } }
 ];
-const AGENT_SYSTEM_PROMPT = `You are CodePlus, a local-first coding agent. You directly inspect, edit, and verify the user's real workspace with tools; you do not merely describe code.
+const AGENT_SYSTEM_PROMPT = `You are CodePlus, a senior full-stack engineering agent. You directly inspect, design, implement, debug, test, and verify the user's real workspace with tools; you do not merely describe code.
 
 Rules:
 - When the user asks to build, change, fix, refactor, or test code, keep working until the requested result is implemented. Do not stop at instructions or a code sample.
+- Own the result end to end across frontend, backend, data, configuration, tests, and documentation when those layers are required by the request. Make sound senior-engineering decisions from the repository context without asking avoidable questions.
+- Translate short or non-technical requests into a complete, maintainable implementation. Include accessibility, responsive behavior, validation, error handling, and secure defaults when relevant, while avoiding unrelated feature expansion.
 - Follow applicable project instruction files supplied by CodePlus. Instructions are ordered from broadest to most specific; a more deeply scoped instruction wins when two project instructions conflict.
+- CodePlus may provide a metadata-only catalog of project skills from .agents/skills. When the user names $skill-name or a skill clearly matches the task, read the complete SKILL.md before acting and follow its workflow. Do not load unrelated skills.
+- Use project memory only for durable preferences, decisions, and conventions that will help future work. Never store credentials, tokens, secrets, temporary progress, raw tool output, or guesses.
+- Command policy rules are enforced by CodePlus. Never bypass a forbidden or approval-gated command with a different shell spelling or wrapper.
 - CodePlus may pre-read applicable project instructions and the active file. Use those current tool results instead of reading the same file again without a reason.
 - For a requested workspace change, inspect the actual workspace before mutating it. Never answer with generic example code in place of doing the work.
 - The latest user message is the only active task. Earlier messages and tool summaries are context only; never resume an older task unless the latest message explicitly asks you to.
@@ -192,14 +766,19 @@ Rules:
 - Files are at project root. Paths are relative (e.g. src/app/page.tsx); never use paths outside the workspace.
 - If native function calling is unavailable, request tools by emitting exactly <tool_call>{"name":"read","arguments":{"filePath":"src/app/page.tsx"}}</tool_call>. Emit one block per call and no prose until tool work is complete.`;
 
-const LOCAL_AGENT_SYSTEM_PROMPT = `You are CodePlus, an autonomous coding agent operating on the user's real workspace.
+const LOCAL_AGENT_SYSTEM_PROMPT = `You are CodePlus, a senior full-stack engineering agent operating autonomously on the user's real workspace.
 
 Complete only the latest request. Use tools for workspace work; do not return tutorial code instead of editing. CodePlus may already have supplied project instructions and fresh file reads, so use them and do not repeat identical calls.
 
 Workflow: inspect the relevant source -> make the smallest correct edit -> re-read every changed file -> run a relevant check when available -> return a brief factual summary in the user's language.
 
 Rules:
+- Own the requested outcome across frontend, backend, data, configuration, tests, and documentation when needed. Infer routine implementation details from the repository instead of asking avoidable questions.
+- Turn short product requests into complete, maintainable changes with accessibility, responsive behavior, validation, useful errors, and secure defaults where relevant. Do not expand into unrelated work.
 - Follow applicable project instruction files in broad-to-specific order. Deeper instructions win conflicts.
+- Use available project skills progressively: read a matching .agents/skills/*/SKILL.md before acting, and do not load unrelated skills. An explicitly named $skill must be used.
+- Project memory is only for durable preferences, decisions, and conventions. Never store secrets, credentials, temporary progress, raw output, or guesses.
+- Respect CodePlus command policy decisions; never bypass forbidden or approval-gated commands.
 - Preserve unrelated code, user changes, and every do-not-change constraint.
 - Read an existing file before edit/write. For exact edit, copy a unique oldString from the latest read.
 - For styling, inspect the stylesheet. Remove unwanted rules instead of adding overrides or invalid JSX styles. A request to remove a hover effect means deleting the relevant :hover rule, not leaving it and adding transform:none or box-shadow:none.
@@ -289,7 +868,7 @@ const state = {
   apiKey: loadSavedKey(_savedProvider), draftProvider: 'local', localModels: [], localModelsLoaded: false, localModelsLoading: false, localModelsError: '', pullProgress: {}, removingModel: '',
   keyDrafts: {}, keyEditing: {}, keyRemoveConfirm: '', modelDeleteConfirm: null,
   cloudModels: Object.fromEntries(PROVIDERS.filter(item=>item.group==='Cloud').map(item=>[item.id, structuredClone(item.models || [])])), cloudModelsLoaded: {}, cloudModelLoading: {}, cloudModelError: {},
-  messages: [], chatHistoryKey: '', chatSessions: [], activeChatId: '', chatMenuOpen: false, removalConfirm: null, editingMessageId: '', copiedMessageId: '', sending: false, modelWaiting: false, turnProvider: null, stopRequested: false, abortController: null, stopPromise: null, stopReject: null, settingsOpen: false, appSettingsOpen: false, modelPickerOpen: false, dirty: false, dirtyFiles: new Set(), vscodeNote: '', vscodeConsent: false, vscodeView: false, vscodeUrl: '',
+  messages: [], chatHistoryKey: '', chatSessions: [], activeChatId: '', chatMenuOpen: false, removalConfirm: null, editingMessageId: '', copiedMessageId: '', reviewMessageId: '', reviewFile: '', sending: false, modelWaiting: false, turnProvider: null, stopRequested: false, abortController: null, stopPromise: null, stopReject: null, turnTicker: null, settingsOpen: false, appSettingsOpen: false, modelPickerOpen: false, dirty: false, dirtyFiles: new Set(), vscodeNote: '', vscodeConsent: false, vscodeView: false, vscodeUrl: '',
   folders: {}, previewUrl: localStorage.getItem('codeplus-preview-url') || 'http://localhost:3000', customPreview: Boolean(localStorage.getItem('codeplus-preview-url')),
   projectName: localStorage.getItem('codeplus-project-name') || 'CodePlus', projects: [], activeProjectId: '', expandedProjects: {}, workspacesOpen: false, newFileOpen: false, previewHidden: false, editorClosed: false, filesHidden: localStorage.getItem('codeplus-files-hidden') === 'true', downloadOpen: false,
   dirHandle: null, dirPath: '', treePaths: [], fileHandles: {}, loading: new Set(),
@@ -307,7 +886,7 @@ const state = {
   editorAutoSave: localStorage.getItem('codeplus-editor-auto-save') === 'true',
   themeColor: THEME_OPTIONS.some(option => option.id === localStorage.getItem('codeplus-theme-color')) ? localStorage.getItem('codeplus-theme-color') : 'midnight',
   uiFont: FONT_OPTIONS.some(option => option.id === localStorage.getItem('codeplus-ui-font')) ? localStorage.getItem('codeplus-ui-font') : 'manrope',
-  appVersion: localStorage.getItem('codeplus-app-version') || '0.1.33',
+  appVersion: localStorage.getItem('codeplus-app-version') || '0.1.34',
   editorHistory: new Map()
 };
 const FS_IGNORE = new Set(['node_modules','.git','.codeplus','dist','build','target','.next','.nuxt','.venv','venv','__pycache__','.DS_Store']);
@@ -337,6 +916,10 @@ async function readWorkspaceText(root, relative) {
 async function writeWorkspaceText(root, relative, content) {
   if (window.__TAURI_INTERNALS__) return tauriInvoke('write_workspace_file', { root, relative, content });
   await serverWorkspaceRequest('write', { root, relative, content });
+}
+async function deleteWorkspaceText(root, relative) {
+  if (window.__TAURI_INTERNALS__) return tauriInvoke('delete_workspace_file', { root, relative });
+  await serverWorkspaceRequest('delete', { root, relative });
 }
 async function createWorkspaceDirectory(parent, name) {
   if (window.__TAURI_INTERNALS__) return tauriInvoke('create_workspace_dir', { parent, name });
@@ -417,6 +1000,8 @@ function applyChatHistory(saved) {
   state.chatSessions = chats;
   state.activeChatId = chats.some(item => item.id === saved?.activeChatId) ? saved.activeChatId : chats[0].id;
   state.messages = structuredClone(chats.find(item => item.id === state.activeChatId)?.messages || []);
+  state.reviewMessageId = '';
+  state.reviewFile = '';
   state.chatMenuOpen = false;
 }
 let chatSaveTimer = null;
@@ -456,7 +1041,7 @@ async function startNewChat() {
   const session = makeChatSession();
   state.chatSessions.unshift(session);
   state.activeChatId = session.id;
-  state.messages = []; state.draftPrompt = ''; state.editingMessageId = ''; state.copiedMessageId = ''; state.chatMenuOpen = false;
+  state.messages = []; state.draftPrompt = ''; state.editingMessageId = ''; state.copiedMessageId = ''; state.reviewMessageId = ''; state.reviewFile = ''; state.chatMenuOpen = false;
   try { await idbSet(state.chatHistoryKey, chatHistoryPayload()); } catch {}
   app(); requestAnimationFrame(() => document.querySelector('#prompt')?.focus());
 }
@@ -466,7 +1051,7 @@ async function openChatSession(id) {
   syncActiveChat();
   const session = state.chatSessions.find(item => item.id === id);
   if (!session) return;
-  state.activeChatId = id; state.messages = structuredClone(session.messages); state.draftPrompt = ''; state.editingMessageId = ''; state.copiedMessageId = ''; state.chatMenuOpen = false;
+  state.activeChatId = id; state.messages = structuredClone(session.messages); state.draftPrompt = ''; state.editingMessageId = ''; state.copiedMessageId = ''; state.reviewMessageId = ''; state.reviewFile = ''; state.chatMenuOpen = false;
   try { await idbSet(state.chatHistoryKey, chatHistoryPayload()); } catch {}
   app(); scrollChatToBottom();
 }
@@ -527,7 +1112,7 @@ function toolProgressMessage(toolCalls = [], modelContent = '') {
   const calls = Array.isArray(toolCalls) ? toolCalls.filter(call => call?.name) : [];
   if (!calls.length) return 'Working on the next step.';
   if (calls.length > 1) {
-    const allReads = calls.every(call => ['read', 'glob', 'grep'].includes(call.name));
+    const allReads = calls.every(call => ['read', 'glob', 'grep', 'memory'].includes(call.name));
     return allReads
       ? `Inspecting ${calls.length} relevant workspace items to locate the exact implementation.`
       : `Running ${calls.length} focused workspace steps to complete and verify the requested change.`;
@@ -545,10 +1130,48 @@ function toolProgressMessage(toolCalls = [], modelContent = '') {
     bash: `Running${target(command)} to verify the completed change.`,
     glob: `Mapping files${target(pattern)} to find the relevant implementation.`,
     grep: `Searching for${target(pattern ? `“${pattern}”` : '')} to locate the exact code that needs attention.`,
+    memory: args.action === 'remember' ? 'Saving a durable project decision for future work.' : args.action === 'forget' ? 'Removing the requested project memory.' : 'Reviewing durable project context before continuing.',
     inspect_preview: 'Inspecting the rendered preview to verify the requested interface.',
     todowrite: 'Organizing the remaining work into a focused task plan.'
   };
   return summaries[call.name] || `Running ${call.name} to continue the requested work.`;
+}
+function toolActivityIcon(name) {
+  const kind = ['read', 'glob', 'grep'].includes(name) ? 'read' : ['edit', 'write'].includes(name) ? 'edit' : name;
+  const paths = {
+    read: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21V5.5Z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21V5.5Z"/>',
+    edit: '<path d="m4 20 4.2-1 10.6-10.6a2 2 0 0 0-2.8-2.8L5.4 16.2 4 20Z"/><path d="m14.5 7.1 2.8 2.8"/>',
+    bash: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m5 0h5"/>',
+    inspect_preview: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/><circle cx="7" cy="6" r=".5" fill="currentColor" stroke="none"/>',
+    todowrite: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L7 4.8m-3.5 7.1 1.2 1.2L7 10.7m-3.5 7.2 1.2 1.2L7 16.7"/>',
+    memory: '<path d="M12 4a4 4 0 0 0-4 4v1H7a3 3 0 0 0-3 3v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3a3 3 0 0 0-3-3h-1V8a4 4 0 0 0-4-4Z"/><path d="M10 9V8a2 2 0 1 1 4 0v1"/>'
+  };
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[kind] || paths.bash}</svg>`;
+}
+function toolActivityTarget(call = {}) {
+  const args = call.arguments || {};
+  if (call.name === 'bash') return args.command || '';
+  if (call.name === 'glob') return args.pattern || '';
+  if (call.name === 'grep') return `${args.pattern || ''}${args.include ? ` · ${args.include}` : ''}`;
+  if (call.name === 'memory') return args.fact || args.action || '';
+  return args.filePath || '';
+}
+function toolActivityDescription(call = {}, status = 'working') {
+  const target = String(toolActivityTarget(call) || '').trim();
+  const named = target || 'the relevant workspace files';
+  const completed = status === 'done';
+  const descriptions = {
+    read: completed ? `Inspected ${named} and added the current source to the working context.` : `Inspecting ${named} to understand the current implementation.`,
+    glob: completed ? `Mapped matching workspace files for ${named}.` : `Mapping workspace files for ${named}.`,
+    grep: completed ? `Located matching code for ${named}.` : `Searching the workspace for ${named}.`,
+    edit: completed ? `Applied the requested scoped change to ${named}.` : `Applying a focused change to ${named}.`,
+    write: completed ? `Saved the requested implementation to ${named}.` : `Writing the requested implementation to ${named}.`,
+    bash: completed ? `Finished running ${named} and captured its result.` : `Running ${named} to check the project.`,
+    inspect_preview: completed ? 'Inspected the rendered preview and recorded the visual evidence.' : 'Inspecting the rendered preview against the requested interface.',
+    memory: completed ? `Updated durable project memory for ${named}.` : `Reviewing durable project memory for ${named}.`,
+    todowrite: completed ? 'Updated the task plan for the remaining work.' : 'Updating the task plan for the remaining work.'
+  };
+  return descriptions[call.name] || (completed ? `Finished ${call.name || 'the workspace step'}.` : `Running ${call.name || 'the next workspace step'}.`);
 }
 function compactAgentSummary(content, editedFiles = []) {
   const clean = String(content || '')
@@ -564,6 +1187,44 @@ function compactAgentSummary(content, editedFiles = []) {
   if (clean) return clean.length > 520 ? `${clean.slice(0, 517).trimEnd()}…` : clean;
   return editedFiles.length ? `Updated ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'} and verified the requested change.` : 'Checked the requested result; no file changes were needed.';
 }
+function agentFinalContent(content = '', editedFiles = []) {
+  const clean = String(content || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+    .trim();
+  if (clean) return clean.slice(0, 12000);
+  return editedFiles.length ? `Updated ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'} and verified the requested change.` : 'Checked the requested result; no file changes were needed.';
+}
+function lineChangeStats(before = '', after = '') {
+  const previous = before == null ? [] : String(before).split('\n');
+  const next = after == null ? [] : String(after).split('\n');
+  const available = new Map();
+  for (const line of previous) available.set(line, (available.get(line) || 0) + 1);
+  let additions = 0;
+  for (const line of next) {
+    const count = available.get(line) || 0;
+    if (count) available.set(line, count - 1);
+    else additions += 1;
+  }
+  const deletions = [...available.values()].reduce((sum, count) => sum + count, 0);
+  return { additions, deletions };
+}
+function trackAgentFileChange(audit, path, before, after) {
+  if (!audit?.fileChanges || !path) return;
+  const existing = audit.fileChanges.get(path);
+  audit.fileChanges.set(path, {
+    path,
+    before: existing ? existing.before : (before == null ? null : String(before)),
+    after: String(after ?? '')
+  });
+}
+function completionFileChanges(audit, editedFiles) {
+  return editedFiles.map(path => {
+    const change = audit?.fileChanges?.get(path) || { path, before:null, after:String(state.files[path] ?? '') };
+    return { ...change, ...lineChangeStats(change.before, change.after), created:change.before == null };
+  });
+}
 function formatWorkedTime(durationMs) {
   const seconds = Math.max(1, Math.round((Number(durationMs) || 0) / 1000));
   const minutes = Math.floor(seconds / 60);
@@ -576,10 +1237,11 @@ function agentCompletionMessage(audit, summary = '', durationMs = 0) {
     role: 'assistant',
     mode: 'agent',
     completion: true,
-    completionTitle: editedFiles.length ? 'Changes completed' : 'Review completed',
-    content: compactAgentSummary(summary, editedFiles),
+    completionTitle: editedFiles.length ? 'Finished editing' : 'Review completed',
+    content: agentFinalContent(summary, editedFiles),
     durationMs: Math.max(0, Number(durationMs) || 0),
-    editedFiles
+    editedFiles,
+    fileChanges: completionFileChanges(audit, editedFiles)
   };
 }
 const PROJECTS_KEY = 'codeplus-projects-v1';
@@ -743,7 +1405,9 @@ function toggleLineComment() {
 }
 function activeLanguage(path=state.active) {
   if (/\.css$/i.test(path)) return 'CSS';
-  if (/\.mjs$/i.test(path)) return 'JavaScript';
+  if (/\.(mjs|cjs|jsx|js)$/i.test(path)) return /\.jsx$/i.test(path) ? 'JavaScript React' : 'JavaScript';
+  if (/\.html?$/i.test(path)) return 'HTML';
+  if (/\.py$/i.test(path)) return 'Python';
   if (/\.json$/i.test(path)) return 'JSON';
   if (/\.mdx?$/i.test(path)) return 'Markdown';
   if (/\.tsx$/i.test(path)) return 'TypeScript React';
@@ -761,10 +1425,61 @@ function highlightCode(text) {
     return `${tagStart}<span class="token-tag">${tag}</span>`;
   });
 }
+function projectRuntimeMetadata() {
+  try { return JSON.parse(state.files['codeplus.project.json'] || ''); } catch { return null; }
+}
+function projectHasPath(path) {
+  return Object.prototype.hasOwnProperty.call(state.files, path) || state.treePaths.includes(path);
+}
+function previewRuntime() {
+  const metadata = projectRuntimeMetadata();
+  if (metadata) {
+    let url = metadata.preview?.url || metadata.runtime?.stages?.find(stage=>stage.id==='start')?.url || '';
+    if (!url && ['Web frameworks','Backend & APIs'].includes(metadata.technology?.group) && metadata.commands?.run) {
+      url = /vite/i.test(metadata.commands.run) ? 'http://localhost:5173' : 'http://localhost:3000';
+    }
+    if (!url || !metadata.commands?.run) return null;
+    const technology = projectTechnology(metadata.technology?.id);
+    const contract = projectRuntimeContract(
+      technology,
+      metadata.commands?.install || 'No dependency install required',
+      metadata.commands.run,
+      metadata.commands?.check || 'Verify the running project',
+      url
+    );
+    return {
+      url,
+      command:metadata.commands.run,
+      technology:metadata.technology?.label || technology.label || 'project',
+      prerequisites:metadata.runtime?.prerequisites?.length ? metadata.runtime.prerequisites : contract.prerequisites,
+      stages:metadata.runtime?.stages?.length ? metadata.runtime.stages : contract.stages
+    };
+  }
+  return projectHasPath('package.json') ? {
+    url:state.previewUrl || 'http://localhost:3000',
+    command:'npm run dev',
+    technology:'Node.js',
+    prerequisites:technologyPrerequisites(projectTechnology('nextjs')),
+    stages:projectRuntimeContract(projectTechnology('nextjs'), 'npm install', 'npm run dev', 'npm run build', state.previewUrl || 'http://localhost:3000').stages
+  } : null;
+}
+function previewSetupStages(runtime, running=false) {
+  if (!runtime?.stages?.length) return '';
+  const commandFor = stage => stage.command || (stage.id === 'prerequisites'
+    ? (runtime.prerequisites || []).map(item=>item.command).join(' + ')
+    : '');
+  return `<div class="preview-setup" ${running ? 'aria-busy="true"' : ''}>
+    <strong>${running ? 'Running setup stages' : 'Setup stages'}</strong>
+    <ol class="preview-stage-list">${runtime.stages.map((stage,index) => {
+      const command = commandFor(stage);
+      return `<li><span class="preview-stage-number">${index + 1}</span><span><b>${escape(stage.label || stage.id)}</b>${command ? `<code>${escape(command)}</code>` : ''}</span></li>`;
+    }).join('')}</ol>
+  </div>`;
+}
 function previewAddress() {
-  const hasPackageJson = state.treePaths.includes('package.json');
-  const canDev = hasPackageJson && fsMode() !== 'memory';
-  const devBtn = canDev ? `<button type="button" id="dev-server-btn" class="icon-btn ${state.devRunning ? 'dev-running' : ''}" title="${state.devRunning ? 'Dev server running — click to stop' : state.devStarting ? 'Starting dev server…' : 'Start dev server (auto runs npm run dev)'}">${state.devStarting ? '⏳' : state.devRunning ? '⏹' : '▶'}</button>` : '';
+  const runtime = previewRuntime();
+  const canDev = runtime && fsMode() !== 'memory';
+  const devBtn = canDev ? `<button type="button" id="dev-server-btn" class="icon-btn ${state.devRunning ? 'dev-running' : ''}" title="${state.devRunning ? 'Dev server running — click to stop' : state.devStarting ? 'Starting dev server…' : `Start ${runtime.technology} dev server (${runtime.command})`}">${state.devStarting ? '⏳' : state.devRunning ? '⏹' : '▶'}</button>` : '';
   return `<form class="preview-head" id="preview-form"><span>◉</span>${devBtn}<input class="url" id="preview-url" value="${escape(state.previewUrl)}" aria-label="Preview URL" spellcheck="false" /><button type="submit" title="Load preview URL">↵</button><button type="button" id="open-preview" title="Open preview URL in a new tab">↗</button></form>`;
 }
 function fileTree() {
@@ -772,7 +1487,7 @@ function fileTree() {
   const root = {};
   for (const file of paths) { let branch=root; for (const part of file.split('/')) branch=branch[part] ||= {}; branch.__file=file; }
   const folderIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 3h18"/></svg>';
-  const icon = (name, isFolder) => isFolder ? [folderIcon, `folder ${name==='src'?'source-folder':name==='app'?'app-folder':'component-folder'}`] : name.endsWith('.tsx') ? ['⚛','file react-file'] : name.endsWith('.mjs') ? ['JS','file javascript-file'] : name.endsWith('.json') ? ['{}','file json-file'] : name.endsWith('.css') ? ['#','file css-file'] : name.endsWith('.ts') ? ['TS','file typescript-file'] : name.startsWith('.env') ? ['⚙','file config-file'] : name.endsWith('.md') ? ['ⓘ','file markdown-file'] : ['•','file'];
+  const icon = (name, isFolder) => isFolder ? [folderIcon, `folder ${name==='src'?'source-folder':name==='app'?'app-folder':'component-folder'}`] : name.endsWith('.tsx') || name.endsWith('.jsx') ? ['⚛','file react-file'] : /\.(mjs|cjs|js)$/i.test(name) ? ['JS','file javascript-file'] : name.endsWith('.json') ? ['{}','file json-file'] : name.endsWith('.css') ? ['#','file css-file'] : name.endsWith('.ts') ? ['TS','file typescript-file'] : name.endsWith('.py') ? ['Py','file python-file'] : name.endsWith('.html') ? ['<>','file html-file'] : name.startsWith('.env') ? ['⚙','file config-file'] : name.endsWith('.md') ? ['ⓘ','file markdown-file'] : ['•','file'];
   const row = (chev, glyph, label, type, depth, key='', folder='') => `<div class="tree-row ${key === state.active && !state.editorClosed ? 'selected':''} ${state.dirtyFiles.has(key) ? 'changed':''}" ${key ? `data-file="${escape(key)}"` : ''} ${folder ? `data-folder="${escape(folder)}"` : ''}><span class="indent">${'&nbsp;'.repeat(depth * 2)}</span><span class="chev">${chev}</span><span class="tree-icon ${type}">${glyph}</span><span>${escape(label)}</span></div>`;
   const visit = (node, depth=0, parent='') => Object.entries(node).filter(([name]) => name !== '__file').sort(([a,aNode],[b,bNode]) => Number(Boolean(aNode.__file)) - Number(Boolean(bNode.__file)) || a.localeCompare(b)).map(([name, child]) => {
     const path=parent ? `${parent}/${name}` : name; const isFile=Boolean(child.__file); const [glyph,type]=icon(name,!isFile);
@@ -802,67 +1517,217 @@ function projectsTree() {
 }
 function preview() {
   if (!state.customPreview) return `<div class="preview-card"><span class="preview-badge">CODEPLUS</span><h1>Build faster with your own AI stack.</h1><p>One focused workspace for browser and desktop. The preview updates as you edit.</p><div class="preview-actions"><button>Start building</button><button>View docs</button></div></div>`;
-  const needsDev = state.treePaths.includes('package.json');
+  const runtime = previewRuntime();
+  const needsDev = Boolean(runtime) && fsMode() !== 'memory';
   if (needsDev && !state.devRunning && !state.devStarting) {
-    return `<div class="preview-card dev-prompt"><span class="preview-badge" style="background:#1a2336;color:#8ea4ff">DEV SERVER</span><h1>Dev server not running</h1><p>Preview is set to <code>${escape(state.previewUrl)}</code> but nothing is listening there yet.</p><p style="color:#758197;font-size:12px">Run <code>npm run dev</code> in your terminal, or click Start to let CodePlus run it for you.</p><div class="preview-actions"><button id="preview-start-dev" class="primary">▶ Start dev server</button><button id="preview-reload">↻ Reload preview</button></div></div>`;
+    return `<div class="preview-card dev-prompt"><span class="preview-badge" style="background:#1a2336;color:#8ea4ff">${escape(runtime.technology.toUpperCase())}</span><h1>Dev server not running</h1><p>Preview is set to <code>${escape(runtime.url || state.previewUrl)}</code> but nothing is listening there yet.</p>${previewSetupStages(runtime)}<p class="preview-stage-help">CodePlus runs these steps in order. If a runtime is missing, you will get a precise installation hint.</p><div class="preview-actions"><button id="preview-start-dev" class="primary">▶ Start dev server</button><button id="preview-reload">↻ Reload preview</button></div></div>`;
   }
-  if (state.devStarting) return `<div class="preview-card"><span class="preview-badge" style="background:#1a2336;color:#8ea4ff">DEV SERVER</span><h1>Starting dev server…</h1><p>Running <code>npm run dev</code> — preview will reload automatically when ready.</p><div class="preview-actions"><button disabled>⏳ Starting…</button></div></div>`;
+  if (state.devStarting) return `<div class="preview-card dev-prompt"><span class="preview-badge" style="background:#1a2336;color:#8ea4ff">SETUP</span><h1>Preparing ${escape(runtime?.technology || 'project')}…</h1><p>CodePlus is following the project-specific setup contract.</p>${previewSetupStages(runtime, true)}<div class="preview-actions"><button disabled>⏳ Starting…</button></div></div>`;
   return `<iframe class="preview-frame" title="Project preview" src="${escape(state.previewUrl)}"></iframe>`;
 }
-function messages() {
-  const callsById = new Map();
-  const finishedCalls = new Set();
-  for (const message of state.messages) {
-    for (const call of message.tool_calls || []) callsById.set(call.id, call);
-    if (message.role === 'tool' && message.tool_call_id) finishedCalls.add(message.tool_call_id);
-  }
-  return state.messages.map(m => {
-    if (m.role === 'tool') {
-      const call = callsById.get(m.tool_call_id) || { name: m.name || 'tool', arguments: {} };
-      const args = call.arguments || {};
-      const target = call.name === 'bash' ? args.command : call.name === 'glob' ? args.pattern : call.name === 'grep' ? `${args.pattern || ''}${args.include ? ` · ${args.include}` : ''}` : args.filePath || '';
-      const labels = { read:'Read', write:'Wrote', edit:'Edited', bash:'Ran', glob:'Listed', grep:'Searched', todowrite:'Updated tasks' };
-      const output = String(m.content || '');
-      const blocked = /^(?:Blocked|Doom loop)/i.test(output);
-      const failed = /^Error:/i.test(output) || /\[(?:exit code [1-9]|command timed out)/i.test(output);
-      const prepared = output.startsWith('CodePlus automatically loaded');
-      const unchanged = output.startsWith('No change:');
-      const status = blocked ? 'Blocked' : failed ? 'Failed' : prepared ? 'Read required' : unchanged ? 'No change' : 'Done';
-      if (prepared || unchanged) labels[call.name] = prepared ? 'Prepared' : 'Unchanged';
-      const preview = output.slice(0, 4000);
-      return `<details class="message tool ${blocked?'blocked':failed?'failed':''}" data-message-id="${escape(m.id)}"><summary><span class="tool-state">${blocked?'!':failed?'×':'✓'}</span><span class="tool-label">${escape(labels[call.name] || call.name || 'Tool')}</span>${target ? `<code title="${escape(target)}">${escape(String(target).slice(0,160))}</code>` : ''}<span class="tool-status">${status}</span></summary><pre class="tool-output">${escape(preview)}${output.length>4000?'\n…':''}</pre></details>`;
+function renderInlineMarkdown(value = '') {
+  const links = [];
+  const source = String(value).replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_, label, href) => {
+    const token = `CODEPLUSLINK${links.length}TOKEN`;
+    links.push(`<a href="${escapeAttr(href)}" target="_blank" rel="noreferrer">${escape(label)}</a>`);
+    return token;
+  });
+  let html = escape(source)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  links.forEach((link, index) => { html = html.replace(`CODEPLUSLINK${index}TOKEN`, link); });
+  return html;
+}
+function renderChatMarkdown(value = '') {
+  const source = String(value || '').trim();
+  if (!source) return '';
+  const blocks = source.split(/```/);
+  return blocks.map((block, index) => {
+    if (index % 2) {
+      const lines = block.replace(/^\s*[a-z0-9_+-]+\s*\n/i, '').replace(/\n$/, '');
+      return `<pre><code>${escape(lines)}</code></pre>`;
     }
-    const toolCalls = (m.tool_calls || []).map(tc => {
-      const args = tc.arguments || {};
-      const summary = tc.name === 'read' ? args.filePath : tc.name === 'write' ? args.filePath : tc.name === 'edit' ? `${args.filePath}` : tc.name === 'bash' ? args.command : tc.name === 'glob' ? args.pattern : tc.name === 'grep' ? args.pattern : JSON.stringify(args).slice(0,120);
-      return `<div class="tool-call"><span class="tool-name">${escape(tc.name)}</span><span class="tool-args">${escape(String(summary||'').slice(0,160))}</span></div>`;
-    }).join('');
+    const lines = block.split(/\r?\n/);
+    let html = '', listOpen = false;
+    const closeList = () => { if (listOpen) { html += '</ul>'; listOpen = false; } };
+    for (const raw of lines) {
+      const line = raw.trim();
+      const bullet = line.match(/^[-*]\s+(.+)/);
+      const heading = line.match(/^(#{1,4})\s+(.+)/);
+      if (bullet) {
+        if (!listOpen) { html += '<ul>'; listOpen = true; }
+        html += `<li>${renderInlineMarkdown(bullet[1])}</li>`;
+      } else if (heading) {
+        closeList();
+        const level = Math.min(4, heading[1].length + 1);
+        html += `<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`;
+      } else if (!line) {
+        closeList();
+      } else {
+        closeList();
+        html += `<p>${renderInlineMarkdown(line)}</p>`;
+      }
+    }
+    closeList();
+    return html;
+  }).join('');
+}
+function toolBatchLabel(calls = []) {
+  const kinds = new Set(calls.map(call => ['read','glob','grep'].includes(call.name) ? 'read' : ['write','edit'].includes(call.name) ? 'edit' : call.name));
+  const labels = [];
+  if (kinds.has('read')) labels.push('Read files');
+  if (kinds.has('edit')) labels.push('Edited files');
+  if (kinds.has('bash')) labels.push('Ran commands');
+  if (kinds.has('inspect_preview')) labels.push('Inspected preview');
+  if (kinds.has('memory')) labels.push('Updated memory');
+  if (kinds.has('todowrite')) labels.push('Updated plan');
+  return labels.length ? labels.join(', ') : 'Used workspace tools';
+}
+function diffReviewRows(change = {}) {
+  const before = change.before == null ? [] : String(change.before).split('\n');
+  const after = change.after == null ? [] : String(change.after).split('\n');
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < before.length - prefix && suffix < after.length - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+  const rows = [];
+  const addRow = (kind, number, text) => rows.push(`<div class="review-line ${kind}"><span>${number || ''}</span><code>${escape(text)}</code></div>`);
+  const contextStart = Math.max(0, prefix - 3);
+  if (contextStart > 0) addRow('skip', '', '⋯');
+  for (let index = contextStart; index < prefix; index++) addRow('context', index + 1, before[index]);
+  before.slice(prefix, before.length - suffix).slice(0, 220).forEach((line, index) => addRow('removed', prefix + index + 1, `- ${line}`));
+  after.slice(prefix, after.length - suffix).slice(0, 220).forEach((line, index) => addRow('added', prefix + index + 1, `+ ${line}`));
+  if ((before.length - prefix - suffix) > 220 || (after.length - prefix - suffix) > 220) addRow('skip', '', '⋯ diff shortened ⋯');
+  const suffixStart = Math.max(prefix, before.length - suffix);
+  for (let index = suffixStart; index < Math.min(before.length, suffixStart + 3); index++) addRow('context', index + 1, before[index]);
+  if (suffix > 3) addRow('skip', '', '⋯');
+  return rows.join('') || '<div class="review-empty">No textual difference.</div>';
+}
+function changeReviewModal() {
+  const message = state.messages.find(item => item.id === state.reviewMessageId && item.completion);
+  const changes = Array.isArray(message?.fileChanges) ? message.fileChanges : [];
+  if (!message || !changes.length) return '';
+  const active = changes.find(change => change.path === state.reviewFile) || changes[0];
+  const files = changes.map(change => `<button type="button" class="review-file ${change.path === active.path ? 'active' : ''}" data-review-file="${escapeAttr(change.path)}"><code>${escape(change.path)}</code><span class="diff-add">+${Number(change.additions) || 0}</span><span class="diff-delete">-${Number(change.deletions) || 0}</span></button>`).join('');
+  return `<div class="modal-backdrop review-backdrop"><section class="modal change-review" role="dialog" aria-modal="true" aria-labelledby="change-review-title"><header><div><small>CHANGE REVIEW</small><h2 id="change-review-title">${escape(active.path)}</h2></div><button type="button" id="close-change-review" aria-label="Close review">×</button></header><div class="change-review-body"><aside>${files}</aside><main><div class="review-stats"><span class="diff-add">+${Number(active.additions) || 0}</span><span class="diff-delete">-${Number(active.deletions) || 0}</span><button type="button" data-open-edited-file="${escapeAttr(active.path)}">Open file</button></div><div class="review-diff">${diffReviewRows(active)}</div></main></div></section></div>`;
+}
+function messages() {
+  const resultsByCall = new Map();
+  const finishedCalls = new Set();
+  const completedActivity = new Set();
+  let turnActivity = [];
+  for (const [index, message] of state.messages.entries()) {
+    if (message.role === 'user') turnActivity = [];
+    if (message.role === 'tool' && message.tool_call_id) {
+      finishedCalls.add(message.tool_call_id);
+      resultsByCall.set(message.tool_call_id, message);
+    }
+    if (message.role === 'tool' || (message.role === 'assistant' && message.tool_calls?.length)) turnActivity.push(index);
+    if (message.completion) {
+      for (const activityIndex of turnActivity) completedActivity.add(activityIndex);
+      turnActivity = [];
+    }
+  }
+  let lastUserIndex = -1;
+  for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+    if (state.messages[index].role === 'user') { lastUserIndex = index; break; }
+  }
+  const latestTurnCompleted = lastUserIndex >= 0 && state.messages.slice(lastUserIndex + 1).some(message => message.completion);
+  const workingHeaderIndex = state.sending && !latestTurnCompleted
+    ? state.messages.findIndex((message, index) => index > lastUserIndex && message.role === 'assistant' && message.tool_calls?.length)
+    : -1;
+  const turnStart = state.messages[lastUserIndex]?.createdAt || Date.now();
+  const workingHeader = () => `<div class="agent-turn-time active" data-turn-start="${Number(turnStart)}">Working for ${escape(formatWorkedTime(Date.now() - turnStart))}</div>`;
+  return state.messages.map((m, index) => {
+    if (completedActivity.has(index)) return '';
+    if (m.role === 'tool') return '';
     if (m.role === 'assistant' && m.tool_calls?.length) {
-      const labels = { read:'Reading', write:'Writing', edit:'Editing', bash:'Running', glob:'Listing', grep:'Searching', inspect_preview:'Inspecting preview', todowrite:'Updating tasks' };
       const pendingCalls = m.tool_calls.filter(call => !finishedCalls.has(call.id));
       const explanation = m.progress || toolProgressMessage(m.tool_calls, m.content);
-      const progress = `<div class="message agent-update ${pendingCalls.length ? 'active' : 'done'}" data-message-id="${escape(m.id)}"><span class="agent-progress-state" aria-hidden="true">${pendingCalls.length ? '<span class="tool-spinner"></span>' : '✓'}</span><div><span class="agent-progress-label">${pendingCalls.length ? 'Working' : 'Progress'}</span><p>${escape(explanation)}</p></div></div>`;
-      const running = pendingCalls.map(call => {
-        const args = call.arguments || {};
-        const target = call.name === 'bash' ? args.command : call.name === 'glob' ? args.pattern : call.name === 'grep' ? `${args.pattern || ''}${args.include ? ` · ${args.include}` : ''}` : args.filePath || '';
-        return `<div class="message tool running" data-message-id="${escape(m.id)}:${escape(call.id)}"><div class="tool-running-row"><span class="tool-spinner" aria-hidden="true"></span><span class="tool-label">${escape(labels[call.name] || call.name || 'Working')}</span>${target ? `<code title="${escapeAttr(target)}">${escape(String(target).slice(0,160))}</code>` : ''}<span class="tool-status">Working</span></div></div>`;
+      const primaryCall = m.tool_calls[0] || {};
+      const resultItems = m.tool_calls.map(call => ({ call, result:resultsByCall.get(call.id) }));
+      const failed = resultItems.some(({ result }) => result && (/^(?:Error:|Blocked)/i.test(String(result.content || '')) || /\[(?:exit code [1-9]|command timed out)/i.test(String(result.content || ''))));
+      const detailRows = resultItems.map(({ call, result }) => {
+        const target = toolActivityTarget(call);
+        const output = String(result?.content || 'Waiting for this step…').slice(0, 4000);
+        return `<div class="agent-action-detail"><strong>${escape(target || call.name)}</strong><pre>${escape(output)}${String(result?.content || '').length > 4000 ? '\n…' : ''}</pre></div>`;
       }).join('');
-      return progress + running;
+      const progress = `<div class="message agent-update ${pendingCalls.length ? 'active' : 'done'}" data-message-id="${escape(m.id)}"><span class="agent-progress-state tool-outline-icon" aria-hidden="true">${toolActivityIcon(primaryCall.name)}</span><p>${escape(explanation)}</p>${pendingCalls.length ? '<span class="tool-spinner" aria-label="Working"></span>' : ''}</div>`;
+      const actions = `<details class="agent-action-group ${failed ? 'failed' : ''}"><summary><span class="tool-outline-icon">${toolActivityIcon(primaryCall.name)}</span><span>${escape(toolBatchLabel(m.tool_calls))}</span>${pendingCalls.length ? '<span class="agent-action-state">Working</span>' : failed ? '<span class="agent-action-state failed">Needs attention</span>' : ''}</summary><div class="agent-action-details">${detailRows}</div></details>`;
+      return `${index === workingHeaderIndex ? workingHeader() : ''}${progress}${actions}`;
     }
     if (m.completion) {
       const editedFiles = Array.isArray(m.editedFiles) ? m.editedFiles : [];
-      const files = editedFiles.map(path => `<button type="button" data-open-edited-file="${escapeAttr(path)}" title="Open ${escapeAttr(path)}"><span>✓</span><code>${escape(path)}</code></button>`).join('');
-      return `<div class="message completion" data-message-id="${escape(m.id)}"><div class="completion-worked">Worked for ${escape(formatWorkedTime(m.durationMs))}<span aria-hidden="true">›</span></div><div class="completion-result"><strong class="completion-title">${escape(m.completionTitle || (editedFiles.length ? 'Changes completed' : 'Review completed'))}</strong><div class="completion-summary">${escape(m.content || '')}</div></div>${editedFiles.length ? `<section class="completion-edits"><div class="completion-edits-head"><span class="completion-edits-icon">↳</span><strong>Edited ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'}</strong></div><div class="completion-files">${files}</div></section>` : '<div class="completion-no-files">No files edited</div>'}</div>`;
+      const changeMap = new Map((Array.isArray(m.fileChanges) ? m.fileChanges : []).map(change => [change.path, change]));
+      const changes = editedFiles.map(path => changeMap.get(path) || { path, additions:0, deletions:0 });
+      const totals = changes.reduce((sum, change) => ({ additions:sum.additions + (Number(change.additions) || 0), deletions:sum.deletions + (Number(change.deletions) || 0) }), { additions:0, deletions:0 });
+      const visibleChanges = m.filesExpanded ? changes : changes.slice(0, 3);
+      const files = visibleChanges.map(change => `<button type="button" data-open-edited-file="${escapeAttr(change.path)}" title="Open ${escapeAttr(change.path)}"><span class="completion-file-icon">${toolActivityIcon('edit')}</span><code>${escape(change.path)}</code><span class="completion-file-stats"><b>+${Number(change.additions) || 0}</b><i>-${Number(change.deletions) || 0}</i></span></button>`).join('');
+      const more = changes.length > 3 ? `<button type="button" class="completion-more" data-show-completion="${escapeAttr(m.id)}">${m.filesExpanded ? 'Show fewer files' : `Show ${changes.length - 3} more file${changes.length - 3 === 1 ? '' : 's'}`} <span>${m.filesExpanded ? '⌃' : '⌄'}</span></button>` : '';
+      const canUndo = changes.length && changes.every(change => Object.prototype.hasOwnProperty.call(change, 'after')) && !m.undone;
+      const controls = changes.length ? `<div class="completion-controls"><button type="button" data-undo-completion="${escapeAttr(m.id)}" ${canUndo ? '' : 'disabled'}>${m.undone ? 'Undone ✓' : 'Undo ↶'}</button><button type="button" data-review-completion="${escapeAttr(m.id)}" ${m.fileChanges?.length ? '' : 'disabled'}>Review</button></div>` : '';
+      return `<div class="message completion" data-message-id="${escape(m.id)}"><div class="completion-worked">Worked for ${escape(formatWorkedTime(m.durationMs))}<span aria-hidden="true">›</span></div><div class="completion-result"><div class="completion-summary markdown-body">${renderChatMarkdown(m.content || '')}</div></div>${editedFiles.length ? `<section class="completion-edits"><div class="completion-edits-head"><span class="completion-edits-icon">${toolActivityIcon('edit')}</span><strong>Edited ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'}</strong><span class="completion-total-stats"><b>+${totals.additions}</b><i>-${totals.deletions}</i></span>${controls}</div><div class="completion-files">${files}</div>${more}</section>` : '<div class="completion-no-files">No files edited</div>'}</div>`;
     }
-    const body = m.content ? `<div class="msg-body">${escape(m.content)}</div>` : '';
+    const body = m.content ? `<div class="msg-body ${m.role === 'assistant' ? 'markdown-body' : ''}">${m.role === 'assistant' ? renderChatMarkdown(m.content) : escape(m.content)}</div>` : '';
     const images = (m.images || []).map(img => `<div class="msg-image"><img src="${escape(img.image_url?.url || '')}" alt="uploaded image" /></div>`).join('');
     const copied = state.copiedMessageId === m.id;
     const copyAction = m.content ? `<button type="button" data-copy-message="${escape(m.id)}" title="Copy message" aria-label="Copy message">${copied ? '<span class="action-check">✓</span>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>'}</button>` : '';
     const editAction = m.role==='user' && m.content ? `<button type="button" data-edit-message="${escape(m.id)}" title="Edit and resend" aria-label="Edit message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6a2 2 0 0 0-2.8-2.8L5.4 16.2 4 20Z"/><path d="m14.5 7.1 2.8 2.8"/></svg></button>` : '';
     const actions = copyAction || editAction ? `<div class="message-actions">${copyAction}${editAction}</div>` : '';
     const editedNote = m.editedFrom ? '<span class="edited-note">Edited copy</span>' : '';
-    return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${images}${m.content?.trim() ? toolCalls : ''}</div>`;
-  }).join('') + (state.modelWaiting ? `<div class="message tool running model-waiting"><div class="tool-running-row"><span class="tool-spinner" aria-hidden="true"></span><span class="tool-label">Waiting for ${escape(compactModelName(state.turnProvider?.model || state.model, '', 28))}</span><span class="tool-status">${state.turnProvider?.provider === 'local' ? 'Up to 2 min' : 'Working'}</span></div></div>` : '') + (state.todos.length ? `<div class="message todos"><span class="role">Todos</span>${state.todos.map(t=>`<div class="todo ${t.status}"><span>${t.status==='completed'?'✓':t.status==='in_progress'?'◉':'○'} ${escape(t.content)}</span><span class="prio">${escape(t.priority||'')}</span></div>`).join('')}</div>` : '');
+    return `<div class="message ${m.role === 'user' ? 'user' : ''} ${m.error ? 'error':''} ${m.stopped ? 'stopped':''}" data-message-id="${escape(m.id)}"><div class="message-head"><span class="role">${m.role === 'user' ? 'You' : m.role==='assistant' ? escape(compactModelName(m.model||'agent', '', 30)) : escape(m.role)}${editedNote}</span>${actions}</div>${body}${images}</div>`;
+  }).join('') + (state.modelWaiting ? `${workingHeaderIndex < 0 ? workingHeader() : ''}<div class="model-waiting"><span class="tool-spinner" aria-hidden="true"></span><span>Waiting for ${escape(compactModelName(state.turnProvider?.model || state.model, '', 28))}</span><small>${state.turnProvider?.provider === 'local' ? 'Local model' : 'Working'}</small></div>` : '') + (state.todos.length ? `<div class="message todos"><span class="role">Todos</span>${state.todos.map(t=>`<div class="todo ${t.status}"><span>${t.status==='completed'?'✓':t.status==='in_progress'?'◉':'○'} ${escape(t.content)}</span><span class="prio">${escape(t.priority||'')}</span></div>`).join('')}</div>` : '');
+}
+function completionMessage(id) {
+  return state.messages.find(message => message.id === id && message.completion);
+}
+function openCompletionReview(id, path = '') {
+  const message = completionMessage(id);
+  if (!message?.fileChanges?.length) return;
+  state.reviewMessageId = id;
+  state.reviewFile = path || message.fileChanges[0].path;
+  app();
+}
+function toggleCompletionFiles(id) {
+  const message = completionMessage(id);
+  if (!message) return;
+  message.filesExpanded = !message.filesExpanded;
+  persistChatHistory();
+  app();
+}
+async function undoAgentCompletion(id) {
+  if (state.sending) throw new Error('Stop the current agent response before undoing changes.');
+  const message = completionMessage(id);
+  const changes = Array.isArray(message?.fileChanges) ? message.fileChanges : [];
+  if (!message || !changes.length || message.undone) return;
+  for (const change of changes) {
+    const exists = workspacePaths().includes(change.path) || Object.prototype.hasOwnProperty.call(state.files, change.path);
+    if (!exists) throw new Error(`Cannot undo because ${change.path} no longer exists.`);
+    const current = await freshAgentContent(change.path);
+    if (String(current) !== String(change.after ?? '')) throw new Error(`Cannot undo because ${change.path} changed after this agent turn.`);
+  }
+  for (const change of [...changes].reverse()) {
+    if (change.before == null) {
+      await deleteFileAt(change.path);
+    } else {
+      recordEditorSnapshot(change.path, change.after, 0, 0, true);
+      if (fsMode() === 'memory') {
+        state.files[change.path] = String(change.before);
+        await persistMemoryProject();
+      } else {
+        await writeFileAt(change.path, String(change.before));
+        state.files[change.path] = String(change.before);
+        state.dirtyFiles.delete(change.path);
+      }
+    }
+  }
+  message.undone = true;
+  message.undoneAt = Date.now();
+  state.reviewMessageId = '';
+  state.reviewFile = '';
+  state.vscodeNote = `Undid changes from ${changes.length} file${changes.length === 1 ? '' : 's'}.`;
+  persistChatHistory();
+  app();
 }
 function chatHistoryMenu() {
   const chats = [...state.chatSessions].sort((a,b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -926,6 +1791,49 @@ function workspacePaths() {
   return fsMode() === 'memory' ? Object.keys(state.files) : state.treePaths;
 }
 
+function projectMemoryKey() {
+  return projectValueKey('agent-memory');
+}
+
+function loadProjectMemory() {
+  try {
+    const value = JSON.parse(localStorage.getItem(projectMemoryKey()) || '[]');
+    return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()).slice(-20) : [];
+  } catch { return []; }
+}
+
+function safeMemoryFact(value = '') {
+  const fact = String(value).replace(/\s+/g, ' ').trim().slice(0, 500);
+  if (!fact) throw new Error('A concise memory fact is required.');
+  if (/(?:api[_ -]?key|access[_ -]?token|secret|password|authorization|private[_ -]?key)\s*[:=]|\bsk-[a-z0-9_-]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/i.test(fact)) {
+    throw new Error('Sensitive values cannot be stored in CodePlus memory.');
+  }
+  return fact;
+}
+
+function projectMemoryContext() {
+  const memories = loadProjectMemory();
+  if (!memories.length) return '';
+  return `Durable project memory (context only; the latest user request wins):\n${memories.map(item => `- ${item}`).join('\n')}`;
+}
+
+function agentMemory({ action = 'list', fact = '' } = {}) {
+  const current = loadProjectMemory();
+  if (action === 'list') return current.length ? current.map(item => `- ${item}`).join('\n') : '(no project memories)';
+  const clean = safeMemoryFact(fact);
+  if (action === 'remember') {
+    const next = [...current.filter(item => item.toLowerCase() !== clean.toLowerCase()), clean].slice(-20);
+    localStorage.setItem(projectMemoryKey(), JSON.stringify(next));
+    return `Remembered for this project: ${clean}`;
+  }
+  if (action === 'forget') {
+    const next = current.filter(item => item.toLowerCase() !== clean.toLowerCase());
+    localStorage.setItem(projectMemoryKey(), JSON.stringify(next));
+    return next.length === current.length ? 'No matching project memory was found.' : `Forgot project memory: ${clean}`;
+  }
+  throw new Error(`Unknown memory action: ${action}`);
+}
+
 async function appendAuditedRead(path, apiMessages, audit, id) {
   if (!path || audit.inspected.has(path)) return '';
   const call = { id, name:'read', arguments:{ filePath:path } };
@@ -955,6 +1863,33 @@ async function prepareAgentContext(apiMessages, audit, turnStartedAt, requiresMu
   }
   const instructions = projectInstructionContext(instructionEntries);
   if (instructions) apiMessages[0].content += `\n\n${instructions}`;
+
+  const skillEntries = [];
+  for (const path of projectSkillPaths(state.active, paths)) {
+    try {
+      const content = await freshAgentContent(path);
+      if (content != null) skillEntries.push({ path, content:String(content).slice(0, 12000) });
+    } catch {}
+  }
+  const manifests = skillEntries.map(entry => parseSkillManifest(entry.path, entry.content)).filter(Boolean);
+  audit.availableSkills = manifests;
+  const skillCatalog = skillCatalogContext(skillEntries);
+  if (skillCatalog) apiMessages[0].content += `\n\n${skillCatalog}`;
+  for (const [index, skill] of explicitlyRequestedSkills(audit.originalRequest, manifests).entries()) {
+    await appendAuditedRead(skill.path, apiMessages, audit, `skill_${turnStartedAt}_${index}`);
+  }
+
+  const ruleEntries = [];
+  for (const path of projectRulePaths(paths)) {
+    try {
+      const content = await freshAgentContent(path);
+      if (content != null) ruleEntries.push({ path, content:String(content).slice(0, 20000) });
+    } catch {}
+  }
+  audit.commandRules = parseCommandRules(ruleEntries);
+
+  const memory = projectMemoryContext();
+  if (memory) apiMessages[0].content += `\n\n${memory}`;
 
   // A deterministic active-file preflight gives smaller local models a useful,
   // current source snapshot before they decide which mutation tool to call.
@@ -1085,6 +2020,7 @@ async function agentWrite(filePath, content, audit = null) {
     state.dirtyFiles.delete(filePath);
     if (state.active === filePath) { state.dirty = false; }
   }
+  trackAgentFileChange(audit, filePath, previousContent, String(content));
   app();
   audit?.snapshots.set(filePath, String(content));
   return `Wrote ${filePath} (${String(content).length} chars)`;
@@ -1160,8 +2096,13 @@ async function executeTool(name, args, audit = null) {
     case 'write': output = await agentWrite(args.filePath, args.content, audit); break;
     case 'edit': output = await agentEdit(args.filePath, args.oldString, args.newString, args.replaceAll, audit); break;
     case 'inspect_preview': output = await agentInspectPreview(audit); break;
+    case 'memory': output = agentMemory(args); break;
     case 'bash': {
-      if (commandNeedsApproval(args.command) && !window.confirm(`The coding agent wants to run a potentially destructive command:\n\n${args.command}\n\nRun it?`)) return 'Blocked: the user did not approve this command.';
+      const policy = commandRuleDecision(args.command, audit?.commandRules || []);
+      if (policy?.decision === 'forbidden') return `Blocked by ${policy.path}: ${policy.justification || 'this command is forbidden by project policy.'}`;
+      const needsApproval = policy?.decision === 'prompt' || commandNeedsApproval(args.command);
+      const policyReason = policy?.justification ? `\n\nPolicy: ${policy.justification}` : '';
+      if (needsApproval && !window.confirm(`The coding agent wants to run an approval-gated command:\n\n${args.command}${policyReason}\n\nRun it?`)) return 'Blocked: the user did not approve this command.';
       output = await agentBash(args.command); break;
     }
     case 'glob': { const m = await agentGlob(args.pattern); output = m.length ? m.join('\n') : 'No files matched.'; break; }
@@ -1267,7 +2208,9 @@ const LANDING_DOWNLOADS = {
   windows: { local: 'https://github.com/naylinhtunit/CodePlus-Releases/releases/latest/download/CodePlus-windows-x64-setup.exe', asset: 'CodePlus-windows-x64-setup.exe' }
 };
 const LANDING_COLOR_MODE_KEY = 'codeplus-landing-color-mode';
+const LANDING_LANGUAGE_KEY = 'codeplus-landing-language';
 let landingColorModePreference = ['light', 'dark'].includes(localStorage.getItem(LANDING_COLOR_MODE_KEY)) ? localStorage.getItem(LANDING_COLOR_MODE_KEY) : '';
+let landingLanguagePreference = ['en', 'mm'].includes(localStorage.getItem(LANDING_LANGUAGE_KEY)) ? localStorage.getItem(LANDING_LANGUAGE_KEY) : 'en';
 const landingColorSchemeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
 function landingColorMode() { return landingColorModePreference || (landingColorSchemeMedia?.matches ? 'light' : 'dark'); }
 function toggleLandingColorMode() {
@@ -1275,15 +2218,22 @@ function toggleLandingColorMode() {
   localStorage.setItem(LANDING_COLOR_MODE_KEY, landingColorModePreference);
   return landingColorModePreference;
 }
+function landingLanguage() { return landingLanguagePreference; }
+function toggleLandingLanguage() {
+  landingLanguagePreference = landingLanguagePreference === 'en' ? 'mm' : 'en';
+  localStorage.setItem(LANDING_LANGUAGE_KEY, landingLanguagePreference);
+  document.documentElement.lang = landingLanguagePreference === 'mm' ? 'my' : 'en';
+  return landingLanguagePreference;
+}
 landingColorSchemeMedia?.addEventListener?.('change', () => {
-  if (!landingColorModePreference && (location.pathname === '/' || location.pathname === '/index.html')) app();
+  if (!landingColorModePreference && ['/', '/index.html', '/documentation', '/privacy', '/terms'].includes(location.pathname)) app();
 });
 const LANDING_SHOWCASE = [
-  { src: '/assets/codeplus-showcase-workspace.webp?v=20260912b', title: 'One focused coding workspace', description: 'Move between projects, edit code, inspect the live preview, and guide your coding agent without changing tools.', alt: 'Latest CodePlus workspace with Projects, page.tsx editor, live preview, and Coding Agent' },
-  { src: '/assets/codeplus-showcase-catalog.webp?v=20260912', title: 'Manage local models in place', description: 'Discover installed Ollama models, search the catalog, and download or remove models without leaving CodePlus.', alt: 'Latest CodePlus Ollama settings with installed and downloadable local models' },
-  { src: '/assets/codeplus-showcase-providers.webp?v=20260912', title: 'Choose from 12 AI providers', description: 'Switch between local Ollama and cloud providers including OpenAI, Anthropic, Gemini, Groq, and OpenRouter.', alt: 'Latest CodePlus provider menu showing local and cloud AI providers' },
-  { src: '/assets/codeplus-showcase-provider.webp?v=20260912', title: 'Connect cloud models securely', description: 'Choose a model, manage the device-local API key, and keep provider configuration close to your workspace.', alt: 'Latest CodePlus Google Gemini provider and model settings' },
-  { src: '/assets/codeplus-showcase-settings.webp?v=20260912', title: 'Make CodePlus feel like yours', description: 'Tune theme color, typography, editor behavior, and keyboard shortcuts from one focused settings panel.', alt: 'Latest CodePlus appearance and editor settings' }
+  { src: '/assets/codeplus-showcase-workspace.webp?v=20260912b', title: 'One focused coding workspace', titleMm:'Coding အတွက် တစ်နေရာတည်းသော workspace', description: 'Move between projects, edit code, inspect the live preview, and guide your coding agent without changing tools.', descriptionMm:'Tool ပြောင်းစရာမလိုဘဲ project ပြောင်းခြင်း၊ code ပြင်ခြင်း၊ live preview စစ်ခြင်းနဲ့ coding agent ကို လမ်းညွှန်ခြင်းတို့ ပြုလုပ်နိုင်ပါတယ်။', alt: 'Latest CodePlus workspace with Projects, page.tsx editor, live preview, and Coding Agent', altMm:'Projects၊ code editor၊ live preview နဲ့ Coding Agent ပါသော CodePlus workspace' },
+  { src: '/assets/codeplus-showcase-catalog.webp?v=20260912', title: 'Manage local models in place', titleMm:'Local model များကို တစ်နေရာတည်းမှာ စီမံပါ', description: 'Discover installed Ollama models, search the catalog, and download or remove models without leaving CodePlus.', descriptionMm:'CodePlus ကနေမထွက်ဘဲ Ollama model များကို ရှာဖွေ၊ download နဲ့ remove လုပ်နိုင်ပါတယ်။', alt: 'Latest CodePlus Ollama settings with installed and downloadable local models', altMm:'တပ်ဆင်ထားသော local model များပါသည့် CodePlus Ollama settings' },
+  { src: '/assets/codeplus-showcase-providers.webp?v=20260912', title: 'Choose from 12 AI providers', titleMm:'AI provider ၁၂ မျိုးထဲမှ ရွေးချယ်ပါ', description: 'Switch between local Ollama and cloud providers including OpenAI, Anthropic, Gemini, Groq, and OpenRouter.', descriptionMm:'Local Ollama နဲ့ OpenAI၊ Anthropic၊ Gemini၊ Groq၊ OpenRouter အပါအဝင် cloud provider များကို အလွယ်တကူပြောင်းနိုင်ပါတယ်။', alt: 'Latest CodePlus provider menu showing local and cloud AI providers', altMm:'Local နဲ့ cloud AI provider များပြထားသည့် CodePlus provider menu' },
+  { src: '/assets/codeplus-showcase-provider.webp?v=20260912', title: 'Connect cloud models securely', titleMm:'Cloud model များကို လုံခြုံစွာချိတ်ဆက်ပါ', description: 'Choose a model, manage the device-local API key, and keep provider configuration close to your workspace.', descriptionMm:'Model ရွေးချယ်ပြီး API key ကို စက်ထဲမှာသာ သိမ်းဆည်းကာ provider setting ကို workspace အနီးမှာ စီမံနိုင်ပါတယ်။', alt: 'Latest CodePlus Google Gemini provider and model settings', altMm:'CodePlus Google Gemini provider နဲ့ model settings' },
+  { src: '/assets/codeplus-showcase-settings.webp?v=20260912', title: 'Make CodePlus feel like yours', titleMm:'CodePlus ကို ကိုယ်ပိုင်ပုံစံပြောင်းပါ', description: 'Tune theme color, typography, editor behavior, and keyboard shortcuts from one focused settings panel.', descriptionMm:'Theme color၊ font၊ editor behavior နဲ့ keyboard shortcut များကို setting panel တစ်ခုတည်းကနေ ပြင်နိုင်ပါတယ်။', alt: 'Latest CodePlus appearance and editor settings', altMm:'CodePlus appearance နဲ့ editor settings' }
 ];
 let landingDownloadUrls = Object.fromEntries(Object.entries(LANDING_DOWNLOADS).map(([platform, item]) => [platform, item.local]));
 let landingDownloadCounts = { macos: null, windows: null };
@@ -1383,35 +2333,40 @@ function formatDownloadCount(count) {
 }
 function landing(hideWeb, vercelNotice) {
   const colorMode = landingColorMode();
+  const mm = landingLanguage() === 'mm';
+  const tr = (english, myanmar) => mm ? myanmar : english;
+  document.documentElement.lang = mm ? 'my' : 'en';
   const themeIcon = colorMode === 'light'
     ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>'
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.2A8.5 8.5 0 0 1 8.8 3.6 8.5 8.5 0 1 0 20.4 15.2Z"/></svg>';
-  const themeLabel = colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+  const themeLabel = colorMode === 'dark' ? tr('Switch to light mode', 'အလင်းရောင်ပုံစံသို့ ပြောင်းရန်') : tr('Switch to dark mode', 'အမှောင်ပုံစံသို့ ပြောင်းရန်');
+  const languageLabel = mm ? 'Switch to English' : 'မြန်မာဘာသာသို့ ပြောင်းရန်';
   const dl = state.downloadOpen ? `<div class="download-menu" role="menu"><a href="${escape(landingDownloadUrls.macos)}" role="menuitem"><span class="download-option-head"><strong>macOS</strong><b>${escape(formatDownloadCount(landingDownloadCounts.macos))}</b></span><small>Apple Silicon · .dmg</small></a><a href="${escape(landingDownloadUrls.windows)}" role="menuitem"><span class="download-option-head"><strong>Windows</strong><b>${escape(formatDownloadCount(landingDownloadCounts.windows))}</b></span><small>x64 · Setup.exe</small></a></div>` : '';
   const statValue = count => Number.isFinite(count) ? new Intl.NumberFormat().format(count) : '—';
   const downloadStats = Object.values(landingDownloadCounts).some(Number.isFinite) ? `<div class="landing-download-stats" aria-label="Desktop app download totals"><span><strong>${escape(statValue(landingDownloadCounts.macos))}</strong> macOS downloads</span><i aria-hidden="true"></i><span><strong>${escape(statValue(landingDownloadCounts.windows))}</strong> Windows downloads</span></div>` : '';
-  const showcaseSlides = LANDING_SHOWCASE.map((slide, index) => `<figure class="landing-showcase-slide ${index===landingShowcaseIndex?'active':''}" data-showcase-slide aria-roledescription="slide" aria-label="${index + 1} of ${LANDING_SHOWCASE.length}" aria-hidden="${index!==landingShowcaseIndex}"><img src="${escape(slide.src)}" alt="${escape(slide.alt)}" ${index===0?'fetchpriority="high"':'loading="lazy"'} decoding="async" /></figure>`).join('');
-  const showcaseCopy = LANDING_SHOWCASE.map((slide, index) => `<article class="landing-showcase-copy ${index===landingShowcaseIndex?'active':''}" data-showcase-copy><h2>${escape(slide.title)}</h2><p>${escape(slide.description)}</p></article>`).join('');
+  const showcaseSlides = LANDING_SHOWCASE.map((slide, index) => `<figure class="landing-showcase-slide ${index===landingShowcaseIndex?'active':''}" data-showcase-slide aria-roledescription="slide" aria-label="${index + 1} of ${LANDING_SHOWCASE.length}" aria-hidden="${index!==landingShowcaseIndex}"><img src="${escape(slide.src)}" alt="${escape(mm ? slide.altMm : slide.alt)}" ${index===0?'fetchpriority="high"':'loading="lazy"'} decoding="async" /></figure>`).join('');
+  const showcaseCopy = LANDING_SHOWCASE.map((slide, index) => `<article class="landing-showcase-copy ${index===landingShowcaseIndex?'active':''}" data-showcase-copy><h2>${escape(mm ? slide.titleMm : slide.title)}</h2><p>${escape(mm ? slide.descriptionMm : slide.description)}</p></article>`).join('');
   const showcaseDots = LANDING_SHOWCASE.map((slide, index) => `<button type="button" class="landing-showcase-dot ${index===landingShowcaseIndex?'active':''}" data-showcase-dot="${index}" aria-label="Show ${escape(slide.title)}" aria-current="${index===landingShowcaseIndex}"><span></span></button>`).join('');
   return el`<div class="landing" data-color-mode="${colorMode}">
     <header class="landing-nav">
-      <div class="brand"><img class="brand-logo" src="/assets/codeplus-logo.png" alt="CodePlus" />CodePlus</div>
-      <div class="landing-nav-actions"><button type="button" class="landing-theme-toggle" id="landing-theme-toggle" aria-label="${themeLabel}" title="${themeLabel}" aria-pressed="${colorMode === 'dark'}">${themeIcon}</button><div class="download-wrap"><button class="download" id="landing-downloads" aria-haspopup="menu" aria-expanded="${state.downloadOpen}">Download <svg class="download-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button>${dl}</div></div>
+      <a class="brand" href="/" data-landing-route><img class="brand-logo" src="/assets/codeplus-logo.png" alt="CodePlus" />CodePlus</a>
+      <nav class="landing-nav-links" aria-label="${tr('Main navigation', 'အဓိကလမ်းညွှန်')}"><a href="/documentation" data-landing-route>${tr('Documentation', 'အသုံးပြုနည်း')}</a></nav>
+      <div class="landing-nav-actions"><button type="button" class="landing-language-toggle" id="landing-language-toggle" aria-label="${languageLabel}" title="${languageLabel}"><span aria-hidden="true">${mm ? '🇲🇲' : '🇺🇸'}</span><b>${mm ? 'MM' : 'EN'}</b></button><button type="button" class="landing-theme-toggle" id="landing-theme-toggle" aria-label="${themeLabel}" title="${themeLabel}" aria-pressed="${colorMode === 'dark'}">${themeIcon}</button><div class="download-wrap"><button class="download" id="landing-downloads" aria-haspopup="menu" aria-expanded="${state.downloadOpen}">${tr('Download', 'ဒေါင်းလုဒ်')} <svg class="download-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button>${dl}</div></div>
     </header>
-    ${vercelNotice ? `<div class="landing-notice">Web app is only available when running CodePlus locally. Download the desktop app to get started.</div>` : ``}
+    ${vercelNotice ? `<div class="landing-notice">${tr('Web app is only available when running CodePlus locally. Download the desktop app to get started.', 'Web app ကို local CodePlus မှာသာ အသုံးပြုနိုင်ပါတယ်။ စတင်ရန် desktop app ကို download လုပ်ပါ။')}</div>` : ``}
     <section class="landing-hero">
-      <span class="landing-eyebrow">LOCAL-FIRST · MULTI-MODEL · BROWSER + DESKTOP</span>
-      <h1>Build faster with your own AI stack.</h1>
-      <p>One focused workspace for browser and desktop. File explorer, code editor, live preview, and 12 AI providers — Ollama, OpenAI, Anthropic, Gemini, Groq, DeepSeek and more. Files stay on your disk.</p>
+      <span class="landing-eyebrow">${tr('LOCAL-FIRST · MULTI-MODEL · BROWSER + DESKTOP', 'LOCAL-FIRST · MULTI-MODEL · BROWSER + DESKTOP')}</span>
+      <h1>${tr('Build faster with your own AI stack.', 'ကိုယ်ပိုင် AI stack နဲ့ ပိုမြန်မြန် တည်ဆောက်ပါ။')}</h1>
+      <p>${tr('One focused workspace for browser and desktop. File explorer, code editor, live preview, and 12 AI providers — Ollama, OpenAI, Anthropic, Gemini, Groq, DeepSeek and more. Files stay on your disk.', 'Browser နဲ့ desktop အတွက် workspace တစ်ခုတည်း။ File explorer၊ code editor၊ live preview နဲ့ Ollama၊ OpenAI၊ Anthropic၊ Gemini၊ Groq၊ DeepSeek စသည့် AI provider ၁၂ မျိုး ပါဝင်ပြီး ဖိုင်များကို သင့်စက်ထဲမှာပဲ ထားရှိပါတယ်။')}</p>
       <div class="landing-cta">
-        ${hideWeb ? `` : `<a class="landing-primary" id="open-web-app" href="/app">Open Web App →</a>`}
+        ${hideWeb ? `` : `<a class="landing-primary" id="open-web-app" href="/app">${tr('Open Web App →', 'Web App ဖွင့်ရန် →')}</a>`}
       </div>
-      <div class="landing-badges"><span>12 providers</span><span>Local-first</span><span>Tauri desktop</span><span>Live preview</span></div>
+      <div class="landing-badges"><span>${tr('12 providers', 'Provider ၁၂ မျိုး')}</span><span>Local-first</span><span>Tauri desktop</span><span>${tr('Live preview', 'တိုက်ရိုက် Preview')}</span></div>
       ${downloadStats}
     </section>
     <section class="landing-showcase" aria-label="CodePlus product tour" aria-roledescription="carousel" tabindex="0">
       <div class="landing-showcase-shell">
-        <div class="landing-showcase-stage">${showcaseSlides}<div class="landing-showcase-tag"><span></span>Product walkthrough</div></div>
+        <div class="landing-showcase-stage">${showcaseSlides}<div class="landing-showcase-tag"><span></span>${tr('Product walkthrough', 'Product လမ်းညွှန်')}</div></div>
         <div class="landing-showcase-rail">
           <div class="landing-showcase-count" id="showcase-count">${String(landingShowcaseIndex + 1).padStart(2, '0')} / ${String(LANDING_SHOWCASE.length).padStart(2, '0')}</div>
           <div class="landing-showcase-copy-stack">${showcaseCopy}</div>
@@ -1422,13 +2377,13 @@ function landing(hideWeb, vercelNotice) {
     </section>
     <section class="landing-agent-config" id="agent-configuration" aria-labelledby="agent-configuration-title">
       <div class="landing-agent-copy">
-        <span class="landing-section-kicker"><i></i> Agent configuration</span>
-        <h2 id="agent-configuration-title">Give every project its own operating rules.</h2>
-        <p>CodePlus discovers project instructions before an agent edits anything. Put shared guidance in <code>AGENTS.md</code>, then add a scoped <code>AGENTS.override.md</code> where a folder needs different rules.</p>
+        <span class="landing-section-kicker"><i></i> ${tr('Agent configuration', 'Agent ပြင်ဆင်မှု')}</span>
+        <h2 id="agent-configuration-title">${tr('Give every project its own operating rules.', 'Project တစ်ခုချင်းစီအတွက် ကိုယ်ပိုင်လုပ်ဆောင်မှုစည်းမျဉ်း ထားပါ။')}</h2>
+        <p>${tr('CodePlus discovers project instructions before an agent edits anything. Put shared guidance in', 'Agent က ဖိုင်မပြင်ခင် CodePlus က project instruction များကို အရင်ရှာဖတ်ပါတယ်။ အားလုံးသုံးမည့် လမ်းညွှန်ကို')} <code>AGENTS.md</code>${tr(', then add a scoped', ' မှာရေးပြီး folder အလိုက်စည်းမျဉ်းကို ')}<code>AGENTS.override.md</code>${tr(' where a folder needs different rules.', ' မှာ ထပ်ရေးနိုင်ပါတယ်။')}</p>
         <div class="landing-agent-rules">
-          <article><span>01</span><div><strong>Project context</strong><p>Root instructions establish commands, architecture, conventions, and preserve constraints.</p></div></article>
-          <article><span>02</span><div><strong>Scoped behavior</strong><p>Deeper instructions apply only to that directory, so one project can support multiple stacks cleanly.</p></div></article>
-          <article><span>03</span><div><strong>Verified finish</strong><p>The agent inspects first, makes a focused edit, re-reads changed files, and reports successful checks.</p></div></article>
+          <article><span>01</span><div><strong>${tr('Project context', 'Project အကြောင်းအရာ')}</strong><p>${tr('Root instructions establish commands, architecture, conventions, and preserve constraints.', 'Root instruction မှာ command၊ architecture၊ convention နဲ့ မပြောင်းသင့်သည့်စည်းမျဉ်းများ သတ်မှတ်နိုင်ပါတယ်။')}</p></div></article>
+          <article><span>02</span><div><strong>${tr('Scoped behavior', 'Folder အလိုက်လုပ်ဆောင်မှု')}</strong><p>${tr('Deeper instructions apply only to that directory, so one project can support multiple stacks cleanly.', 'အတွင်းပိုင်း instruction က သက်ဆိုင်ရာ folder မှာသာ သက်ရောက်လို့ project တစ်ခုထဲမှာ stack မျိုးစုံကို ရှင်းလင်းစွာ အသုံးပြုနိုင်ပါတယ်။')}</p></div></article>
+          <article><span>03</span><div><strong>${tr('Verified finish', 'စစ်ဆေးပြီးမှ အပြီးသတ်ခြင်း')}</strong><p>${tr('The agent inspects first, makes a focused edit, re-reads changed files, and reports successful checks.', 'Agent က အရင်စစ်ဆေး၊ လိုအပ်တာကိုပြင်၊ ပြင်ထားသောဖိုင်ကို ပြန်ဖတ်ပြီး စစ်ဆေးမှုအောင်မြင်မှ ရလဒ်တင်ပြပါတယ်။')}</p></div></article>
         </div>
       </div>
       <div class="landing-agent-example" aria-label="Example CodePlus AGENTS.md configuration">
@@ -1451,42 +2406,100 @@ function landing(hideWeb, vercelNotice) {
       </div>
     </section>
     <section class="landing-features">
-      <article><h3>File explorer &amp; editor</h3><p>Direct disk access via File System API / native dialog. Lazy-loaded tree, write-through saves, syntax highlight, and 60KB+ bailout so large files never freeze.</p></article>
-      <article><h3>Live preview</h3><p>Auto-detects <code>package.json</code> dev script, finds the real port (<code>-p</code>/<code>--port</code> or Vite 5173), waits until ready, and shows your app in an iframe. Start/stop from the preview bar.</p></article>
-      <article><h3>12 AI providers</h3><p>Ollama catalog (29 models), plus OpenAI, Anthropic, Gemini, Groq, DeepSeek, Mistral, xAI, OpenRouter, Together, Fireworks, and Cerebras.</p></article>
-      <article><h3>Coding agent</h3><p>Give it a task in plain language or guide it with project-level <code>AGENTS.md</code> rules. The agent inspects, edits, verifies, and reports the completed change.</p></article>
-      <article><h3>Desktop parity</h3><p>Same UI on web, macOS (DMG) and Windows (NSIS). Tauri backend mirrors the Node server: workspace I/O, dev server, and Ollama.</p></article>
-      <article><h3>Private by design</h3><p>No upload — you pick a folder, CodePlus edits in place. Vercel hosts only this landing page; your code never leaves your machine.</p></article>
+      <article><h3>${tr('File explorer & editor', 'File explorer နဲ့ editor')}</h3><p>${tr('Direct disk access via File System API / native dialog. Lazy-loaded tree, write-through saves, syntax highlight, and 60KB+ bailout so large files never freeze.', 'File System API သို့မဟုတ် native dialog ဖြင့် disk ကိုတိုက်ရိုက်အသုံးပြုနိုင်ပြီး syntax highlight၊ save နဲ့ file ကြီးများအတွက် အကာအကွယ် ပါဝင်ပါတယ်။')}</p></article>
+      <article><h3>${tr('Live preview', 'တိုက်ရိုက် Preview')}</h3><p>${tr('Auto-detects', 'CodePlus က')} <code>package.json</code> ${tr('dev script, finds the real port, waits until ready, and shows your app in an iframe. Start or stop it from the preview bar.', 'ရှိ dev script နဲ့ port ကို အလိုအလျောက်ရှာပြီး app အဆင်သင့်ဖြစ်မှ preview ပြပေးပါတယ်။ Preview bar မှ start/stop လုပ်နိုင်ပါတယ်။')}</p></article>
+      <article><h3>${tr('12 AI providers', 'AI provider ၁၂ မျိုး')}</h3><p>Ollama, OpenAI, Anthropic, Gemini, Groq, DeepSeek, Mistral, xAI, OpenRouter, Together, Fireworks, ${tr('and', 'နှင့်')} Cerebras.</p></article>
+      <article><h3>Coding agent</h3><p>${tr('Give it a task in plain language or guide it with project-level', 'သာမန်စကားဖြင့် ခိုင်းနိုင်သလို project-level')} <code>AGENTS.md</code> ${tr('rules. The agent inspects, edits, verifies, and reports the completed change.', 'စည်းမျဉ်းများဖြင့်လည်း လမ်းညွှန်နိုင်ပါတယ်။ Agent က စစ်ဆေး၊ ပြင်ဆင်၊ verify လုပ်ပြီး ပြီးဆုံးရလဒ်တင်ပြပါတယ်။')}</p></article>
+      <article><h3>${tr('Desktop parity', 'Web နှင့် Desktop တူညီမှု')}</h3><p>${tr('The same UI runs on web, macOS and Windows. The Tauri backend mirrors workspace I/O, the dev server, and Ollama support.', 'တူညီသော UI ကို web၊ macOS နဲ့ Windows မှာ အသုံးပြုနိုင်ပြီး Tauri backend က workspace I/O၊ dev server နဲ့ Ollama ကို ထောက်ပံ့ပါတယ်။')}</p></article>
+      <article><h3>${tr('Private by design', 'ကိုယ်ရေးလုံခြုံမှုကို ဦးစားပေးထားခြင်း')}</h3><p>${tr('You pick a folder and CodePlus edits it in place. Your project code stays on your machine.', 'Folder ကို သင်ကိုယ်တိုင်ရွေးပြီး CodePlus က အဲဒီနေရာမှာပဲ ပြင်ပေးပါတယ်။ Project code က သင့်စက်ထဲမှာပဲ ရှိနေပါတယ်။')}</p></article>
     </section>
     <section class="landing-how" aria-labelledby="landing-how-title">
       <div class="landing-how-head">
-        <span class="landing-section-kicker"><i></i> From setup to shipped</span>
-        <h2 id="landing-how-title">How it works</h2>
-        <p>Bring a project into focus, connect the model you trust, and let CodePlus handle the edit-and-verify loop.</p>
+        <span class="landing-section-kicker"><i></i> ${tr('From setup to shipped', 'စတင်ခြင်းမှ အပြီးသတ်ခြင်းအထိ')}</span>
+        <h2 id="landing-how-title">${tr('How it works', 'ဘယ်လိုအလုပ်လုပ်သလဲ')}</h2>
+        <p>${tr('Bring a project into focus, connect the model you trust, and let CodePlus handle the edit-and-verify loop.', 'Project ကိုရွေး၊ ယုံကြည်ရသော model ကိုချိတ်ပြီး ပြင်ဆင်ခြင်းနဲ့ စစ်ဆေးခြင်းကို CodePlus အား လုပ်ဆောင်စေပါ။')}</p>
       </div>
       <div class="landing-how-flow">
-        <article><span>01</span><small>Start</small><h3>Open CodePlus</h3><p>Download the desktop app or launch the web workspace locally.</p></article>
-        <article><span>02</span><small>Project</small><h3>Choose a folder</h3><p>Open an existing project or create a new one. Files stay on your disk.</p></article>
-        <article><span>03</span><small>Model</small><h3>Connect AI</h3><p>Use local Ollama or select one of the supported cloud providers.</p></article>
-        <article><span>04</span><small>Guidance</small><h3>Set the rules</h3><p>Add an optional <code>AGENTS.md</code> so the agent follows your workflow.</p></article>
-        <article><span>05</span><small>Build</small><h3>Edit and verify</h3><p>Watch the preview update while the agent edits, checks, and reports.</p></article>
+        <article><span>01</span><small>${tr('Start', 'စတင်')}</small><h3>${tr('Open CodePlus', 'CodePlus ဖွင့်ပါ')}</h3><p>${tr('Download the desktop app or launch the web workspace locally.', 'Desktop app ကို download လုပ်ပါ သို့မဟုတ် web workspace ကို local မှာဖွင့်ပါ။')}</p></article>
+        <article><span>02</span><small>Project</small><h3>${tr('Choose a folder', 'Folder ရွေးပါ')}</h3><p>${tr('Open an existing project or create a new one. Files stay on your disk.', 'ရှိပြီးသား project ကိုဖွင့်ပါ သို့မဟုတ် အသစ်ဖန်တီးပါ။ ဖိုင်များက သင့် disk ထဲမှာပဲ ရှိပါမယ်။')}</p></article>
+        <article><span>03</span><small>Model</small><h3>${tr('Connect AI', 'AI ချိတ်ဆက်ပါ')}</h3><p>${tr('Use local Ollama or select one of the supported cloud providers.', 'Local Ollama သို့မဟုတ် ထောက်ပံ့ထားသော cloud provider တစ်ခုကို ရွေးပါ။')}</p></article>
+        <article><span>04</span><small>${tr('Guidance', 'လမ်းညွှန်')}</small><h3>${tr('Set the rules', 'စည်းမျဉ်းသတ်မှတ်ပါ')}</h3><p><code>AGENTS.md</code> ${tr('can guide the agent to follow your project workflow.', 'ဖြင့် agent ကို သင့် project workflow အတိုင်း လုပ်ဆောင်စေနိုင်ပါတယ်။')}</p></article>
+        <article><span>05</span><small>${tr('Build', 'တည်ဆောက်')}</small><h3>${tr('Edit and verify', 'ပြင်ဆင်ပြီး စစ်ဆေးပါ')}</h3><p>${tr('Watch the preview update while the agent edits, checks, and reports.', 'Agent က ပြင်ဆင်၊ စစ်ဆေး၊ တင်ပြနေချိန် preview ပြောင်းလဲမှုကို ကြည့်နိုင်ပါတယ်။')}</p></article>
       </div>
     </section>
     <section class="landing-mac-help" aria-labelledby="mac-first-open-title">
-      <div class="landing-mac-help-head"><span>macOS first launch</span><h2 id="mac-first-open-title">Seeing “CodePlus Not Opened”?</h2><p>The current Mac build is signed but is waiting for Apple notarization. If macOS blocks it, use either option below after downloading CodePlus from this page.</p></div>
+      <div class="landing-mac-help-head"><span>${tr('macOS first launch', 'macOS ပထမဆုံးဖွင့်ခြင်း')}</span><h2 id="mac-first-open-title">${tr('Seeing “CodePlus Not Opened”?', '“CodePlus Not Opened” ပြနေပါသလား။')}</h2><p>${tr('The current Mac build is signed but is waiting for Apple notarization. If macOS blocks it, use either option below after downloading CodePlus from this page.', 'လက်ရှိ Mac build ကို sign လုပ်ထားပေမယ့် Apple notarization စောင့်နေဆဲဖြစ်ပါတယ်။ macOS က ပိတ်ထားပါက ဒီစာမျက်နှာမှ CodePlus ကို download လုပ်ပြီးနောက် အောက်ပါနည်းတစ်ခုကို သုံးပါ။')}</p></div>
       <div class="landing-mac-help-options">
-        <article><b>Recommended</b><strong>Open Anyway</strong><p>Try opening CodePlus once. Then open <em>System Settings → Privacy &amp; Security</em>, scroll down, click <em>Open Anyway</em>, and confirm.</p></article>
-        <article><b>Terminal fallback</b><strong>Allow CodePlus only</strong><p>Drag CodePlus into Applications, open Terminal, then run:</p><div class="landing-command"><code>xattr -dr com.apple.quarantine "/Applications/CodePlus.app" &amp;&amp; open "/Applications/CodePlus.app"</code><button type="button" id="copy-mac-command" aria-label="Copy macOS first-launch command">Copy</button></div></article>
+        <article><b>${tr('Recommended', 'အကြံပြုထားသောနည်း')}</b><strong>${tr('Open Anyway', 'Open Anyway ဖြင့်ဖွင့်ရန်')}</strong><p>${tr('Try opening CodePlus once. Then open', 'CodePlus ကို တစ်ကြိမ်ဖွင့်ကြည့်ပါ။ ပြီးလျှင်')} <em>System Settings → Privacy &amp; Security</em> ${tr(', scroll down, click', 'ကိုဖွင့်၊ အောက်သို့ဆင်းပြီး')} <em>Open Anyway</em> ${tr(', and confirm.', 'ကိုနှိပ်ကာ အတည်ပြုပါ။')}</p></article>
+        <article><b>${tr('Terminal fallback', 'Terminal ဖြင့်ဖွင့်ရန်')}</b><strong>${tr('Allow CodePlus only', 'CodePlus ကိုသာ ခွင့်ပြုရန်')}</strong><p>${tr('Drag CodePlus into Applications, open Terminal, then run:', 'CodePlus ကို Applications ထဲသို့ထည့်၊ Terminal ဖွင့်ပြီး အောက်ပါ command ကို run ပါ။')}</p><div class="landing-command"><code>xattr -dr com.apple.quarantine "/Applications/CodePlus.app" &amp;&amp; open "/Applications/CodePlus.app"</code><button type="button" id="copy-mac-command" aria-label="${tr('Copy macOS first-launch command', 'macOS ပထမဆုံးဖွင့်ရန် command ကို copy လုပ်ရန်')}">${tr('Copy', 'ကူးယူ')}</button></div></article>
       </div>
-      <small>Only run this for CodePlus downloaded from this page. It removes quarantine from CodePlus only and does not disable Gatekeeper system-wide.</small>
+      <small>${tr('Only run this for CodePlus downloaded from this page. It removes quarantine from CodePlus only and does not disable Gatekeeper system-wide.', 'ဒီစာမျက်နှာမှ download လုပ်ထားသော CodePlus အတွက်သာ ဒီ command ကို run ပါ။ CodePlus ရဲ့ quarantine ကိုသာ ဖယ်ရှားပြီး စက်တစ်ခုလုံးရဲ့ Gatekeeper ကို ပိတ်ခြင်းမရှိပါ။')}</small>
     </section>
-    <footer class="landing-foot"><span>© CodePlus — built local-first</span></footer>
+    <footer class="landing-foot"><span>© CodePlus — ${tr('built local-first', 'local-first အဖြစ် တည်ဆောက်ထားသည်')}</span><nav aria-label="${tr('Legal and help', 'အကူအညီနှင့် စည်းကမ်းချက်များ')}"><a href="/documentation" data-landing-route>${tr('Documentation', 'အသုံးပြုနည်း')}</a><a href="/privacy" data-landing-route>${tr('Privacy Policy', 'ကိုယ်ရေးလုံခြုံမှု')}</a><a href="/terms" data-landing-route>${tr('Terms', 'စည်းကမ်းချက်များ')}</a></nav></footer>
+  </div>`;
+}
+function landingInformationPage(kind) {
+  const colorMode = landingColorMode();
+  const mm = landingLanguage() === 'mm';
+  const tr = (english, myanmar) => mm ? myanmar : english;
+  document.documentElement.lang = mm ? 'my' : 'en';
+  const pages = {
+    documentation: {
+      eyebrow:tr('DOCUMENTATION', 'အသုံးပြုနည်း'),
+      title:tr('Build with CodePlus', 'CodePlus ဖြင့် တည်ဆောက်ခြင်း'),
+      intro:tr('A practical guide to projects, model providers, local files, previews, and the Coding Agent.', 'Project၊ model provider၊ local file၊ preview နဲ့ Coding Agent အသုံးပြုပုံ လမ်းညွှန်။'),
+      sections:[
+        [tr('1. Start a project', '၁။ Project စတင်ပါ'), tr('Open an existing folder or create a project from the Language / Technology selector. CodePlus keeps each project and its chats separate.', 'ရှိပြီးသား folder ကိုဖွင့်ပါ သို့မဟုတ် Language / Technology selector မှ project အသစ်ဖန်တီးပါ။ Project နဲ့ chat များကို သီးခြားစီထားပါတယ်။')],
+        [tr('2. Connect a model', '၂။ Model ချိတ်ဆက်ပါ'), tr('Use Ollama for local models, or add an API key for any supported cloud provider. Provider keys are stored on this device.', 'Local model အတွက် Ollama သုံးနိုင်ပြီး ပံ့ပိုးထားသော cloud provider မည်သည့်အမျိုးအစားအတွက်မဆို API key ထည့်နိုင်ပါတယ်။ Provider key ကို ဒီစက်ထဲမှာသာ သိမ်းပါတယ်။')],
+        [tr('3. Guide the agent', '၃။ Agent ကို လမ်းညွှန်ပါ'), tr('Describe the outcome in chat. Add AGENTS.md for repository-wide commands and conventions, and AGENTS.override.md for folder-specific rules.', 'Chat မှာ လိုချင်တဲ့ရလဒ်ကို ရေးပါ။ Repository တစ်ခုလုံးအတွက် AGENTS.md နဲ့ folder အလိုက်အတွက် AGENTS.override.md သတ်မှတ်နိုင်ပါတယ်။')],
+        [tr('4. Review and verify', '၄။ ပြန်လည်စစ်ဆေးပါ'), tr('Watch progress in the chat, inspect changed files in the editor, and use the live preview or project checks before shipping.', 'Chat မှ progress ကိုကြည့်၊ editor မှ ပြင်ထားသောဖိုင်များကိုစစ်ပြီး live preview သို့မဟုတ် project check များဖြင့် အတည်ပြုပါ။')]
+      ]
+    },
+    privacy: {
+      eyebrow:tr('PRIVACY POLICY', 'ကိုယ်ရေးလုံခြုံမှု မူဝါဒ'),
+      title:tr('Your project stays yours', 'သင့် Project သည် သင့်ပိုင်ဆိုင်မှုသာဖြစ်သည်'),
+      intro:tr('Effective September 13, 2026. This policy explains what CodePlus handles when you use the landing page, web workspace, or desktop app.', '၂၀၂၆ စက်တင်ဘာ ၁၃ မှ စတင်သက်ရောက်သည်။ Landing page၊ web workspace သို့မဟုတ် desktop app အသုံးပြုချိန် CodePlus က ဘာတွေကို ကိုင်တွယ်သလဲဆိုတာ ရှင်းပြထားပါတယ်။'),
+      sections:[
+        [tr('Local project data', 'Local project data'), tr('CodePlus reads and edits only folders you choose. Project files and chat history are stored locally by the browser or desktop app and are not uploaded to CodePlus servers.', 'CodePlus က သင်ရွေးထားသော folder ကိုသာ ဖတ်ပြီးပြင်ပါတယ်။ Project file နဲ့ chat history ကို browser သို့မဟုတ် desktop app က local မှာသိမ်းပြီး CodePlus server သို့ မတင်ပါ။')],
+        [tr('AI providers', 'AI provider များ'), tr('Prompts, selected project context, and attachments are sent to the AI provider you choose so it can answer or perform requested work. Each provider applies its own privacy terms.', 'သင်ရွေးထားသော AI provider က ဖြေဆိုနိုင်ရန် prompt၊ ရွေးထားသော project context နဲ့ attachment များကို ထို provider ထံပို့ပါတယ်။ Provider တစ်ခုချင်းစီ၏ privacy policy သက်ရောက်ပါတယ်။')],
+        [tr('Keys and settings', 'Key နဲ့ setting များ'), tr('API keys and appearance preferences are stored on your device. Do not enter secrets into chat or commit them to project files.', 'API key နဲ့ appearance preference များကို သင့်စက်ထဲမှာ သိမ်းပါတယ်။ Secret များကို chat ထဲမထည့်ရန်နှင့် project file ထဲ commit မလုပ်ရန် အကြံပြုပါတယ်။')],
+        [tr('Landing-page requests', 'Landing page ဆိုင်ရာ request များ'), tr('The public landing page may request release metadata and download counts from GitHub. CodePlus does not sell personal data.', 'Public landing page က GitHub ထံမှ release metadata နဲ့ download count ကို တောင်းယူနိုင်ပါတယ်။ CodePlus သည် ကိုယ်ရေးအချက်အလက်များကို ရောင်းချခြင်းမပြုပါ။')]
+      ]
+    },
+    terms: {
+      eyebrow:tr('TERMS OF USE', 'အသုံးပြုမှု စည်းကမ်းချက်များ'),
+      title:tr('Use CodePlus responsibly', 'CodePlus ကို တာဝန်ယူ၍ အသုံးပြုပါ'),
+      intro:tr('Effective September 13, 2026. By using CodePlus, you agree to these terms.', '၂၀၂၆ စက်တင်ဘာ ၁၃ မှ စတင်သက်ရောက်သည်။ CodePlus အသုံးပြုခြင်းဖြင့် ဤစည်းကမ်းချက်များကို သဘောတူသည်ဟု သတ်မှတ်ပါတယ်။'),
+      sections:[
+        [tr('Your responsibility', 'သင့်တာဝန်'), tr('You are responsible for reviewing generated code, protecting credentials, respecting licenses, and verifying changes before deployment or distribution.', 'ဖန်တီးထားသော code ကိုပြန်စစ်ခြင်း၊ credential ကာကွယ်ခြင်း၊ license လိုက်နာခြင်းနဲ့ deploy သို့မဟုတ် ဖြန့်ဝေမီ ပြောင်းလဲမှုများကို အတည်ပြုခြင်းသည် သင့်တာဝန်ဖြစ်ပါတယ်။')],
+        [tr('Third-party services', 'Third-party service များ'), tr('Ollama and cloud AI providers are separate services. Their availability, pricing, model behavior, and terms are controlled by those providers.', 'Ollama နဲ့ cloud AI provider များသည် သီးခြား service များဖြစ်ပြီး ရရှိနိုင်မှု၊ ဈေးနှုန်း၊ model behavior နဲ့ စည်းကမ်းများကို သက်ဆိုင်ရာ provider က သတ်မှတ်ပါတယ်။')],
+        [tr('Acceptable use', 'သင့်လျော်သော အသုံးပြုမှု'), tr('Do not use CodePlus to violate law, compromise systems, infringe rights, or create harmful software.', 'ဥပဒေချိုးဖောက်ရန်၊ system များကို ထိခိုက်ရန်၊ အခွင့်အရေးချိုးဖောက်ရန် သို့မဟုတ် အန္တရာယ်ရှိသော software ဖန်တီးရန် CodePlus ကို မသုံးရပါ။')],
+        [tr('Software availability', 'Software ရရှိနိုင်မှု'), tr('CodePlus is provided as available without a guarantee that every generated result or third-party model response will be error-free. Back up important work.', 'CodePlus ကို လက်ရှိရရှိနိုင်သည့်အတိုင်း ပေးထားပြီး ဖန်တီးရလဒ်တိုင်း သို့မဟုတ် third-party model တုံ့ပြန်မှုတိုင်း အမှားကင်းမည်ဟု အာမခံမထားပါ။ အရေးကြီးသောအလုပ်များကို backup လုပ်ထားပါ။')]
+      ]
+    }
+  };
+  const page = pages[kind] || pages.documentation;
+  const themeIcon = colorMode === 'light'
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.2A8.5 8.5 0 0 1 8.8 3.6 8.5 8.5 0 1 0 20.4 15.2Z"/></svg>';
+  const themeLabel = colorMode === 'dark' ? tr('Switch to light mode', 'အလင်းရောင်ပုံစံသို့ ပြောင်းရန်') : tr('Switch to dark mode', 'အမှောင်ပုံစံသို့ ပြောင်းရန်');
+  const languageLabel = mm ? 'Switch to English' : 'မြန်မာဘာသာသို့ ပြောင်းရန်';
+  return el`<div class="landing landing-info" data-color-mode="${colorMode}">
+    <header class="landing-nav">
+      <a class="brand" href="/" data-landing-route><img class="brand-logo" src="/assets/codeplus-logo.png" alt="CodePlus" />CodePlus</a>
+      <nav class="landing-nav-links" aria-label="${tr('Information pages', 'အချက်အလက်စာမျက်နှာများ')}"><a href="/documentation" data-landing-route class="${kind==='documentation'?'active':''}">${tr('Documentation', 'အသုံးပြုနည်း')}</a><a href="/privacy" data-landing-route class="${kind==='privacy'?'active':''}">${tr('Privacy', 'ကိုယ်ရေးလုံခြုံမှု')}</a><a href="/terms" data-landing-route class="${kind==='terms'?'active':''}">${tr('Terms', 'စည်းကမ်းချက်များ')}</a></nav>
+      <div class="landing-nav-actions"><button type="button" class="landing-language-toggle" id="landing-language-toggle" aria-label="${languageLabel}" title="${languageLabel}"><span aria-hidden="true">${mm ? '🇲🇲' : '🇺🇸'}</span><b>${mm ? 'MM' : 'EN'}</b></button><button type="button" class="landing-theme-toggle" id="landing-theme-toggle" aria-label="${themeLabel}" title="${themeLabel}" aria-pressed="${colorMode === 'dark'}">${themeIcon}</button></div>
+    </header>
+    <main class="landing-info-main"><h1>${page.title}</h1><p class="landing-info-intro">${page.intro}</p><div class="landing-info-sections">${page.sections.map(([title, copy]) => `<section><h2>${title}</h2><p>${copy}</p></section>`).join('')}</div></main>
+    <footer class="landing-foot"><span>© CodePlus — ${tr('built local-first', 'local-first အဖြစ် တည်ဆောက်ထားသည်')}</span><nav><a href="/documentation" data-landing-route>${tr('Documentation', 'အသုံးပြုနည်း')}</a><a href="/privacy" data-landing-route>${tr('Privacy Policy', 'ကိုယ်ရေးလုံခြုံမှု')}</a><a href="/terms" data-landing-route>${tr('Terms', 'စည်းကမ်းချက်များ')}</a></nav></footer>
   </div>`;
 }
 function bindLanding() {
   resolveLandingDownloadUrls();
   bindExternalLinks();
+  document.querySelector('#landing-language-toggle')?.addEventListener('click', () => { toggleLandingLanguage(); app(); });
   document.querySelector('#landing-theme-toggle')?.addEventListener('click', () => { toggleLandingColorMode(); app(); });
+  document.querySelectorAll('[data-landing-route]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); history.pushState(null, '', link.getAttribute('href')); app(); }));
   document.querySelector('#landing-downloads')?.addEventListener('click', () => { state.downloadOpen = !state.downloadOpen; app(); });
   document.querySelector('#open-web-app')?.addEventListener('click', e => { e.preventDefault(); history.pushState(null, '', '/app'); app(); });
   document.querySelector('#copy-mac-command')?.addEventListener('click', async event => {
@@ -1522,6 +2535,13 @@ function app(forcePreviewReload = false) {
   const path = location.pathname;
   const local = isLocalHost();
   if (!isTauri) {
+    const informationKind = ({ '/documentation':'documentation', '/privacy':'privacy', '/terms':'terms' })[path];
+    if (informationKind) {
+      document.body.style.minWidth = '0';
+      document.querySelector('#app').innerHTML = landingInformationPage(informationKind);
+      bindLanding();
+      return;
+    }
     if (path === '/' || path === '/index.html') {
       const hideWeb = !local;
       document.body.style.minWidth = '0';
@@ -1555,7 +2575,7 @@ function app(forcePreviewReload = false) {
     ${workspace}
     <aside class="assistant"><div class="ai-head"><div class="chat-head-actions"><div class="chat-history-wrap"><button type="button" class="icon-btn chat-head-button" id="chat-history" title="Recent chats" aria-label="Recent chats" aria-haspopup="menu" aria-expanded="${state.chatMenuOpen}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5M12 7v5l3 2"/></svg></button>${state.chatMenuOpen ? chatHistoryMenu() : ''}</div><button type="button" class="icon-btn chat-head-button" id="new-chat" title="New chat" aria-label="New chat" ${state.sending ? 'disabled' : ''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div><div class="chat-head-identity"><strong>Coding Agent</strong><button class="icon-btn gear" id="settings" title="Model settings">⚙</button></div></div><div class="chat" id="chat">${messages()}</div><form class="composer" id="composer">${composerExtras()}<textarea id="prompt" placeholder="Ask ${escape(compactModelName(state.model || 'a model', '', 32))} to build, edit, test, or debug your code…" ${state.sending ? 'disabled' : ''}>${escape(state.draftPrompt || '')}</textarea><div class="composer-foot"><div class="composer-tools">${state.plusOpen ? `<div class="plus-menu" role="menu"><button type="button" data-plus-action="files">⬆ <span>Files</span><small>Choose from My Computer</small></button><button type="button" data-plus-action="shell">$ <span>Shell Output</span><small>Run and attach a command result</small></button></div>` : ''}<button type="button" class="plus-btn" id="plus-btn" title="Attach optional context" aria-haspopup="menu" aria-expanded="${state.plusOpen}">＋</button><button type="button" class="model-chip" id="model-chip" title="${escape(`${state.provider}: ${state.model || 'Choose a model'}`)}"><span class="dot"></span><span>${escape(providerLabel())}</span></button></div>${state.sending ? '<button class="send stop" id="stop" type="button" title="Stop response" aria-label="Stop response"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" rx="1" /></svg></button>' : '<button class="send" id="send" type="submit" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg></button>'}</div></form></aside>
     <footer class="status"><button class="status-settings" id="codeplus-settings" type="button" title="CodePlus settings" aria-label="CodePlus settings">⚙</button><span>◉ <span class="branch">main</span></span><span>${fsMode()==='memory' ? Object.keys(state.files).length : state.treePaths.length} files</span><span>${state.dirtyFiles.size ? `● ${state.dirtyFiles.size} unsaved — ⌘/Ctrl+S to save` : '✓ saved locally'}</span><span class="live">● Local workspace</span></footer>
-  </main>${state.settingsOpen ? modal() : ''}${state.appSettingsOpen ? appSettingsModal() : ''}${state.modelPickerOpen ? modelPickerModal() : ''}${state.attachPickerOpen ? attachModal() : ''}${state.vscodeConsent ? vscodeConsentModal() : ''}${state.workspacesOpen ? workspaceModal() : ''}${state.newFileOpen ? newFileModal() : ''}${state.removalConfirm ? removalConfirmationModal() : ''}${state.modelDeleteConfirm ? modelDeleteConfirmationModal() : ''}${state.vscodeNote ? `<div class="toast ${state.vscodeNote.startsWith('Could') || state.vscodeNote.startsWith('Enter a valid') || state.vscodeNote.startsWith('Update failed') ? '' : 'success'}">${escape(state.vscodeNote)}</div>` : ''}`;
+  </main>${state.settingsOpen ? modal() : ''}${state.appSettingsOpen ? appSettingsModal() : ''}${state.modelPickerOpen ? modelPickerModal() : ''}${state.attachPickerOpen ? attachModal() : ''}${state.vscodeConsent ? vscodeConsentModal() : ''}${state.workspacesOpen ? workspaceModal() : ''}${state.newFileOpen ? newFileModal() : ''}${state.removalConfirm ? removalConfirmationModal() : ''}${state.modelDeleteConfirm ? modelDeleteConfirmationModal() : ''}${state.reviewMessageId ? changeReviewModal() : ''}${state.vscodeNote ? `<div class="toast ${state.vscodeNote.startsWith('Could') || state.vscodeNote.startsWith('Enter a valid') || state.vscodeNote.startsWith('Update failed') || state.vscodeNote.startsWith('Cannot undo') ? '' : 'success'}">${escape(state.vscodeNote)}</div>` : ''}`;
   renderWorkspace(appRoot, workspaceMarkup, { reloadPreview: forcePreviewReload });
   // Keep the syntax overlay aligned when another panel updates mid-edit.
   const code = document.querySelector('#code');
@@ -1757,6 +2777,7 @@ function cloudModelField() {
 }
 function modal() {
   const info = providerInfo(state.draftProvider);
+  const apiKeyLabel = info.name.endsWith(' API') ? `${info.name} key` : `${info.name} API key`;
   const groups = ['Local','Cloud'];
   const providerOptions = groups.map(group => `<optgroup label="${group} models">${PROVIDERS.filter(item => item.group === group).map(item => `<option value="${item.id}" ${item.id===state.draftProvider?'selected':''}>${escape(item.name)}</option>`).join('')}</optgroup>`).join('');
   const endpointField = state.draftProvider==='local'
@@ -1773,10 +2794,10 @@ function modal() {
     : '<div><button type="button" id="update-api-key">Update</button><button type="button" class="danger-link" id="remove-api-key">Remove</button></div>';
   const savedKeyView = `<div class="saved-key-row"><span class="saved-key"><b>✓ Saved</b><code>${escape(maskedKey(savedKey))}</code></span>${savedKeyActions}</div><small>${keyDesc}</small>`;
   const editKeyView = `<input id="api-key" type="password" value="${escape(draftKey)}" autocomplete="new-password" placeholder="${savedKey ? 'Paste a new key' : 'Paste key'}" /><small>${savedKey ? 'Your current saved key remains active until you enter a replacement and click Save provider.' : keyDesc}</small>${savedKey ? '<button type="button" class="cancel-key-update" id="cancel-key-update">Cancel key update</button>' : ''}`;
-  const keyField = !info.env ? '' : `<div class="field"><div class="field-label-row"><label${editingKey ? ' for="api-key"' : ''}>${escape(info.name)} API key</label><a href="${escape(info.keyUrl)}" target="_blank" rel="noopener">Get API key ↗</a></div>${editingKey ? editKeyView : savedKeyView}</div>`;
+  const keyField = !info.env ? '' : `<div class="field"><div class="field-label-row"><label${editingKey ? ' for="api-key"' : ''}>${escape(apiKeyLabel)}</label><a href="${escape(info.keyUrl)}" target="_blank" rel="noopener">Get API key ↗</a></div>${editingKey ? editKeyView : savedKeyView}</div>`;
   const intro = state.draftProvider==='local' ? 'Choose a provider. Local models are discovered from your Ollama installation.'
     : savedKey ? `${info.name} is connected on this device. Choose a model, or update the saved key only when you need to.`
-    : `Add your ${info.name} API key once to list available models. CodePlus will reuse it on future visits to this provider.`;
+    : `Add your ${apiKeyLabel} once to list available models. CodePlus will reuse it on future visits to this provider.`;
   return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>AI provider settings</h2><p>${intro}</p><div class="field"><label for="provider">Provider</label><select id="provider">${providerOptions}</select></div>${endpointField}${modelField}${keyField}<div class="modal-actions"><button id="cancel-settings">Cancel</button><button class="primary" id="save-settings">Save provider</button></div></section></div>`;
 }
 function modelPickerModal() {
@@ -1873,6 +2894,30 @@ async function writeFileAt(path, content) {
     await writeWorkspaceText(state.dirPath, path, content);
   }
 }
+async function deleteFileAt(path) {
+  path = workspaceRelativePath(path);
+  if (state.dirHandle) {
+    const parts = path.split('/');
+    const name = parts.pop();
+    let dir = state.dirHandle;
+    for (const segment of parts) dir = await dir.getDirectoryHandle(segment);
+    await dir.removeEntry(name);
+    delete state.fileHandles[path];
+  } else if (state.dirPath) {
+    await deleteWorkspaceText(state.dirPath, path);
+  } else {
+    delete state.files[path];
+    await persistMemoryProject();
+  }
+  delete state.files[path];
+  state.treePaths = state.treePaths.filter(item => item !== path);
+  state.dirtyFiles.delete(path);
+  if (state.active === path) {
+    state.active = state.treePaths[0] || '';
+    state.editorClosed = !state.active;
+    state.dirty = false;
+  }
+}
 async function saveActiveFile() {
   const path = state.active;
   if (!path || state.files[path]==null) return;
@@ -1913,16 +2958,16 @@ async function getDevRoot() {
 }
 
 async function tryAutoStartDevServer() {
-  if (!state.treePaths.includes('package.json')) return;
+  if (!projectHasPath('codeplus.project.json') && !projectHasPath('package.json')) return;
   try {
-    if (!state.files['package.json']) await ensureLoaded('package.json');
-    const text = state.files['package.json'] || '';
-    const pkg = JSON.parse(text);
-    if (!pkg.scripts || !pkg.scripts.dev) return;
+    if (projectHasPath('codeplus.project.json') && !state.files['codeplus.project.json']) await ensureLoaded('codeplus.project.json');
+    if (projectHasPath('package.json') && !state.files['package.json']) await ensureLoaded('package.json');
+    if (!previewRuntime()) return;
   } catch { return; }
   if (state.dirPath) {
     try {
-      state.devStarting = true; state.vscodeNote = 'Starting dev server (npm run dev)…'; app();
+      const runtime = previewRuntime();
+      state.devStarting = true; state.vscodeNote = `Preparing ${runtime?.technology || 'project'} (${runtime?.command || 'start command'})…`; app();
       let url;
       if (window.__TAURI_INTERNALS__) {
         url = await tauriInvoke('start_dev_server', { root: state.dirPath });
@@ -1947,18 +2992,19 @@ async function tryAutoStartDevServer() {
       localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
       localStorage.setItem(projectValueKey('custom-preview'), 'true');
       let msg = e.message || String(e);
-      if (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('fetch')) {
+      if (!window.__TAURI_INTERNALS__ && (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('fetch'))) {
         msg = 'Could not connect to CodePlus server at 127.0.0.1:4173. Run `npm run dev` in the project root, or use the desktop app (which has its own server).';
       }
       state.vscodeNote = msg;
       app();
     }
   } else if (state.dirHandle) {
-    state.previewUrl = 'http://localhost:3000/';
+    const runtime = previewRuntime();
+    state.previewUrl = runtime?.url || 'http://localhost:3000/';
     state.customPreview = true;
     localStorage.setItem(projectValueKey('preview-url'), state.previewUrl);
     localStorage.setItem(projectValueKey('custom-preview'), 'true');
-    state.vscodeNote = 'Preview set to http://localhost:3000/. Run `npm run dev` in your terminal to start the dev server, or click ▶ in the preview bar and enter the project path to auto-start.';
+    state.vscodeNote = `Preview set to ${state.previewUrl}. Run \`${runtime?.command || 'the start command'}\` in your terminal, or click ▶ and select the project path to let CodePlus run the setup stages.`;
     app();
   }
 }
@@ -2010,14 +3056,14 @@ async function toggleDevServer() {
     } catch (e) {
       state.devStarting = false;
       let msg = e.message || String(e);
-      if (msg.toLowerCase().includes('failed to fetch')) msg = 'Could not connect to CodePlus server at 127.0.0.1:4173. Run `npm run dev` in the project root, or use the desktop app.';
+      if (!window.__TAURI_INTERNALS__ && msg.toLowerCase().includes('failed to fetch')) msg = 'Could not connect to CodePlus server at 127.0.0.1:4173. Run `npm run dev` in the project root, or use the desktop app.';
       state.vscodeNote = msg; app();
     }
   }
 }
 
 async function refreshDevStatus() {
-  const hasDev = state.treePaths.includes('package.json') && state.customPreview;
+  const hasDev = Boolean(previewRuntime()) && state.customPreview;
   if (!hasDev) return;
   const stored = localStorage.getItem('codeplus-dev-path:' + state.projectName) || '';
   const root = state.dirPath || (/^https?:\/\//i.test(stored) ? '' : stored);
@@ -2080,6 +3126,14 @@ async function activateWorkspace(source) {
   state.previewUrl = localStorage.getItem(projectValueKey('preview-url')) || 'http://localhost:3000';
   state.customPreview = localStorage.getItem(projectValueKey('custom-preview')) === 'true';
   await scanWorkspace();
+  if (state.treePaths.includes('codeplus.project.json')) {
+    await ensureLoaded('codeplus.project.json');
+  }
+  const runtime = previewRuntime();
+  if (runtime && !localStorage.getItem(projectValueKey('preview-url'))) {
+    state.previewUrl = runtime.url;
+    state.customPreview = true;
+  }
   const remembered = localStorage.getItem(projectValueKey('active-file')) || '';
   state.active = state.treePaths.includes(remembered) ? remembered : (state.treePaths.find(path => /(^|\/)(readme\.(md|txt|mdx)|index\.html)$/i.test(path)) || state.treePaths[0] || '');
   await persistWorkspaceSession();
@@ -2217,7 +3271,26 @@ async function reconnectWorkspace() {
 function vscodeConsentModal() { return `<div class="modal-backdrop"><section class="modal vscode-consent" role="dialog" aria-modal="true"><h2>Start VS Code in CodePlus</h2><p>CodePlus will run the installed VS Code web server on <code>127.0.0.1:8765</code> and open the current CodePlus folder. It is available only on this Mac.</p><label class="license-check"><input id="vscode-license" type="checkbox" /> I accept the Visual Studio Code Server license terms.</label><div class="modal-actions"><button id="cancel-vscode">Cancel</button><button class="primary" id="start-vscode" disabled>Start workspace</button></div></section></div>`; }
 function workspaceModal() {
   const canDisk = Boolean(window.__TAURI_INTERNALS__ || isLocalHost() || ('showDirectoryPicker' in window));
-  return `<div class="modal-backdrop"><section class="modal workspace-modal" role="dialog" aria-modal="true"><h2>Add a project</h2><p>Open an existing folder, or name what you want to build. CodePlus creates a tailored, ready-to-edit starter before the first chat.</p>${canDisk ? '<button type="button" class="import-project" id="open-folder"><strong>Open project folder…</strong><span>Pick any folder on this machine. CodePlus edits it in place.</span></button><div class="workspace-divider"><span>New project</span></div>' : ''}<form id="create-workspace"><div class="field"><label for="workspace-name">Project name</label><input id="workspace-name" placeholder="e.g. Gym, Restaurant, Portfolio" required maxlength="80" autocomplete="off" /></div><small class="workspace-help">The name guides the first design, content, metadata, README, and agent brief.${canDisk ? ' You will pick the parent folder next.' : ''}</small><div class="modal-actions"><button type="button" id="cancel-workspaces">Cancel</button><button class="primary" type="submit">Create Project</button></div></form>${canDisk ? '' : '<div class="workspace-divider"><span>or upload a copy</span></div><label class="import-project" for="import-project"><strong>Upload existing project folder</strong><span>The project copy and its chat are stored separately in this browser.</span></label><input id="import-project" type="file" webkitdirectory directory multiple hidden />'}</section></div>`;
+  return `<div class="modal-backdrop"><section class="modal workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
+    <h2 id="workspace-modal-title">Add a project</h2>
+    <p>Open an existing folder, or choose a technology and name what you want to build. CodePlus creates a tailored, ready-to-edit starter before the first chat.</p>
+    ${canDisk ? '<button type="button" class="import-project" id="open-folder"><strong>Open project folder…</strong><span>Pick any folder on this machine. CodePlus edits it in place.</span></button><div class="workspace-divider"><span>New project</span></div>' : ''}
+    <form id="create-workspace">
+      <div class="field technology-field">
+        <label for="workspace-technology">Language / Technology</label>
+        <div class="technology-select-shell">
+          <span class="technology-selected-icon" id="technology-selected-icon">${technologyIcon(projectTechnology('nextjs'))}</span>
+          <select id="workspace-technology" name="workspace-technology" aria-describedby="technology-selected-detail">${technologySelectOptions()}</select>
+          <span class="technology-select-arrow" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></span>
+        </div>
+        <small id="technology-selected-detail">Next.js · TypeScript · Full stack · ${PROJECT_TECHNOLOGIES.length} choices available</small>
+      </div>
+      <div class="field"><label for="workspace-name">Project name</label><input id="workspace-name" placeholder="e.g. Gym, Restaurant, Portfolio" required maxlength="80" autocomplete="off" /></div>
+      <small class="workspace-help">The technology and name guide the starter files, content, metadata, README, and project-specific agent instructions.${canDisk ? ' You will pick the parent folder next.' : ''}</small>
+      <div class="modal-actions"><button type="button" id="cancel-workspaces">Cancel</button><button class="primary" type="submit">Create Project</button></div>
+    </form>
+    ${canDisk ? '' : '<div class="workspace-divider"><span>or upload a copy</span></div><label class="import-project" for="import-project"><strong>Upload existing project folder</strong><span>The project copy and its chat are stored separately in this browser.</span></label><input id="import-project" type="file" webkitdirectory directory multiple hidden />'}
+  </section></div>`;
 }
 function newFileModal() {
   return `<div class="modal-backdrop"><section class="modal new-file-modal" role="dialog" aria-modal="true" aria-labelledby="new-file-title"><h2 id="new-file-title">New file</h2><p>Create a file inside <strong>${escape(state.projectName)}</strong>. Include folders in the path when needed.</p><form id="create-project-file"><div class="field"><label for="new-file-path">File path</label><input id="new-file-path" placeholder="src/components/button.tsx" required maxlength="240" autocomplete="off" /></div><div class="modal-actions"><button type="button" id="cancel-new-file">Cancel</button><button class="primary" type="submit">Create file</button></div></form></section></div>`;
@@ -2330,19 +3403,20 @@ function formatActiveFile() {
   state.vscodeNote=normalized !== source ? `Formatted ${state.active.split('/').at(-1)}. Press ⌘/Ctrl+S to save.` : 'Active file is already formatted.';
   app();
 }
-async function chooseWorkspace(name, files, note) {
+async function chooseWorkspace(name, files, note, technologyId='nextjs') {
   const project = rememberProject({ id:newProjectId('memory'), kind:'memory', name });
   await idbSet(`project-files:${project.id}`, structuredClone(files)).catch(() => {});
   await activateMemoryProject(project, files, note);
-  await seedProjectStarterChat(name);
+  await seedProjectStarterChat(name, technologyId);
   app();
 }
-async function seedProjectStarterChat(name) {
+async function seedProjectStarterChat(name, technologyId='nextjs') {
   if (state.messages.some(message => message.role === 'user' || message.role === 'assistant')) return;
   const profile = projectStarterProfile(name);
+  const technology = projectTechnology(technologyId);
   appendMessage({
     role: 'assistant', mode: 'chat', provider: 'codeplus', model: 'CodePlus',
-    content: `Created a ${profile.label.toLowerCase()} starter for **${name}** with tailored content, responsive styling, project metadata, and an agent brief. You can now ask me to change a section, add a feature, or adjust the visual direction.`
+    content: `Created a ${profile.label.toLowerCase()} starter for **${name}** with **${technology.label}**, tailored content, project metadata, and a senior-engineering AGENTS.md brief. You can now ask me to build the next feature, connect data, refine the interface, or verify the project.`
   });
   await flushChatHistory();
 }
@@ -2357,12 +3431,14 @@ async function stopWorkspaceDevServer(root) {
 }
 async function createWorkspace(event) {
   event.preventDefault(); const raw=document.querySelector('#workspace-name').value.trim(); const name=raw.replace(/[\\/:*?"<>|{}[\]]/g,'-').replace(/\s+/g,' ').slice(0,80);
+  const technologyId = document.querySelector('#workspace-technology')?.value || 'nextjs';
+  const technology = projectTechnology(technologyId);
   if (!name) return;
   if (state.sending || state.dirtyFiles.size) {
     state.vscodeNote = state.sending ? 'Stop the current agent response before creating a project.' : 'Save your unsaved files before creating a project.';
     state.workspacesOpen = false; app(); return;
   }
-  const starters = createProjectStarter(name);
+  const starters = createProjectStarter(name, technology.id);
   const canDisk = Boolean(window.__TAURI_INTERNALS__ || isLocalHost() || ('showDirectoryPicker' in window));
   if (canDisk) {
     try {
@@ -2388,19 +3464,19 @@ async function createWorkspace(event) {
       state.activeProjectId = project.id;
       state.previewUrl = 'http://localhost:3000/';
       state.customPreview = false;
-      state.active = 'src/app/page.tsx';
+      state.active = technology.entry;
       state.workspacesOpen = false;
-      await Promise.all([ensureLoaded('package.json'), ensureLoaded(state.active)]);
+      await Promise.all(['package.json', state.active].filter(path => state.treePaths.includes(path)).map(ensureLoaded));
       await persistWorkspaceSession();
       await loadChatHistory();
-      await seedProjectStarterChat(name);
-      state.vscodeNote = `Created a tailored ${projectStarterProfile(name).label.toLowerCase()} starter for ${name}.`;
+      await seedProjectStarterChat(name, technology.id);
+      state.vscodeNote = `Created ${name} with ${technology.label}.`;
       app();
       tryAutoStartDevServer();
       return;
     } catch (error) { state.workspacesOpen = false; state.vscodeNote = error.message || String(error); app(); return; }
   }
-  await chooseWorkspace(name, starters, `Created ${name} in this browser session. Your browser cannot edit folders on disk.`);
+  await chooseWorkspace(name, starters, `Created ${name} with ${technology.label} in this browser session. Your browser cannot edit folders on disk.`, technology.id);
 }
 async function importWorkspace(event) {
   if (state.sending || state.dirtyFiles.size) {
@@ -2443,6 +3519,7 @@ function bind() {
     document.querySelectorAll('.project-options[open]').forEach(menu => { menu.open = false; menu.querySelector('summary').focus(); });
     if (state.modelDeleteConfirm) { state.modelDeleteConfirm = null; app(); return; }
     if (state.removalConfirm) { state.removalConfirm = null; app(); return; }
+    if (state.reviewMessageId) { state.reviewMessageId = ''; state.reviewFile = ''; app(); return; }
     if (state.chatMenuOpen) { state.chatMenuOpen = false; app(); requestAnimationFrame(() => document.querySelector('#chat-history')?.focus()); }
   });
   listen(document.querySelector('#code'), 'input', e => {
@@ -2493,12 +3570,21 @@ function bind() {
     if (!file) return;
     state.active = file;
     state.editorClosed = false;
+    state.reviewMessageId = '';
+    state.reviewFile = '';
     state.dirty = state.dirtyFiles.has(file);
     for (const folder of file.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))) state.folders[folder] = true;
     localStorage.setItem(projectValueKey('active-file'), file);
     app();
     if (fsMode() !== 'memory') ensureLoaded(file);
   }));
+  document.querySelectorAll('[data-show-completion]').forEach(button => listen(button, 'click', () => toggleCompletionFiles(button.dataset.showCompletion)));
+  document.querySelectorAll('[data-review-completion]').forEach(button => listen(button, 'click', () => openCompletionReview(button.dataset.reviewCompletion)));
+  document.querySelectorAll('[data-undo-completion]').forEach(button => listen(button, 'click', () => {
+    undoAgentCompletion(button.dataset.undoCompletion).catch(error => { state.vscodeNote = error.message || String(error); app(); });
+  }));
+  document.querySelectorAll('[data-review-file]').forEach(button => listen(button, 'click', () => { state.reviewFile = button.dataset.reviewFile; app(); }));
+  listen(document.querySelector('#close-change-review'), 'click', () => { state.reviewMessageId = ''; state.reviewFile = ''; app(); });
   listen(document.querySelector('#cancel-message-edit'), 'click', cancelMessageEdit);
   listen(document.querySelector('#prompt'), 'keydown', event => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -2652,7 +3738,19 @@ function bind() {
     }
   }
   if (state.vscodeConsent) { listen(document.querySelector('#cancel-vscode'), 'click',()=>{state.vscodeConsent=false;app();}); const check=document.querySelector('#vscode-license'); const start=document.querySelector('#start-vscode'); listen(check, 'change',()=>{start.disabled=!check.checked;}); listen(start, 'click',startVSCodeWeb); }
-  if (state.workspacesOpen) { listen(document.querySelector('#cancel-workspaces'), 'click',()=>{state.workspacesOpen=false;app();}); listen(document.querySelector('#open-folder'), 'click', openWorkspaceFolder); listen(document.querySelector('#create-workspace'), 'submit',createWorkspace); listen(document.querySelector('#import-project'), 'change',importWorkspace); }
+  if (state.workspacesOpen) {
+    listen(document.querySelector('#cancel-workspaces'), 'click',()=>{state.workspacesOpen=false;app();});
+    listen(document.querySelector('#open-folder'), 'click', openWorkspaceFolder);
+    listen(document.querySelector('#create-workspace'), 'submit',createWorkspace);
+    listen(document.querySelector('#import-project'), 'change',importWorkspace);
+    listen(document.querySelector('#workspace-technology'), 'change', event => {
+      const technology = projectTechnology(event.target.value);
+      const icon = document.querySelector('#technology-selected-icon');
+      const detail = document.querySelector('#technology-selected-detail');
+      if (icon) icon.innerHTML = technologyIcon(technology);
+      if (detail) detail.textContent = `${technology.label} · ${technology.detail} · ${PROJECT_TECHNOLOGIES.length} choices available`;
+    });
+  }
   listen(document.querySelector('#reconnect-ws'), 'click', reconnectWorkspace);
   if (state.vscodeView) listen(document.querySelector('#close-vscode'), 'click',()=>{state.vscodeView=false;app();});
 }
@@ -2759,6 +3857,19 @@ async function deleteLocalModel(model, endpoint) {
   }
 }
 function scrollChatToBottom() { requestAnimationFrame(() => { const chat=document.querySelector('#chat'); if (chat) chat.scrollTop=chat.scrollHeight; }); }
+function startTurnTicker() {
+  if (state.turnTicker || typeof setInterval !== 'function') return;
+  state.turnTicker = setInterval(() => {
+    document.querySelectorAll('.agent-turn-time.active[data-turn-start]').forEach(node => {
+      node.textContent = `Working for ${formatWorkedTime(Date.now() - Number(node.dataset.turnStart || Date.now()))}`;
+    });
+  }, 1000);
+}
+function stopTurnTicker() {
+  if (!state.turnTicker || typeof clearInterval !== 'function') return;
+  clearInterval(state.turnTicker);
+  state.turnTicker = null;
+}
 function stoppedError() { const error = new Error('Stopped by you.'); error.name = 'AbortError'; return error; }
 function beginTurnCancellation() {
   state.stopRequested = false;
@@ -2819,7 +3930,7 @@ async function sendPrompt(event) {
   state.editingMessageId = '';
   state.uploads = []; // clear uploads after sending
   state.turnProvider = { provider: state.provider, model: state.model, localUrl: state.localUrl, apiKey: loadSavedKey(state.provider) || state.apiKey, toolsEnabled };
-  state.sending = true; state.todos = []; beginTurnCancellation(); app(); scrollChatToBottom();
+  state.sending = true; state.todos = []; beginTurnCancellation(); app(); startTurnTicker(); scrollChatToBottom();
   try {
     if (!toolsEnabled && isCapabilityQuestion(content)) {
       appendMessage({ role:'assistant', mode:'chat', model:'CodePlus', provider:'codeplus', content:capabilityReply(content, { projectName:state.projectName, storage:fsMode(), needsReconnect:Boolean(state.pendingProjectId && state.pendingProjectId === state.activeProjectId) }) });
@@ -2947,6 +4058,7 @@ async function sendPrompt(event) {
     if (state.stopRequested || error?.name === 'AbortError') appendMessage({role:'assistant',content:'Stopped.',stopped:true});
     else appendMessage({role:'assistant',content: modelError(error, [state.turnProvider?.apiKey, state.apiKey]),error:true});
   } finally {
+    stopTurnTicker();
     state.sending=false; state.modelWaiting=false; state.turnProvider=null; state.stopRequested=false; state.abortController=null; state.stopPromise=null; state.stopReject=null; app();
     persistChatHistory();
     // refresh file tree if edits happened

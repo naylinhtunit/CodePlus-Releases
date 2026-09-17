@@ -16,8 +16,12 @@ use wait_timeout::ChildExt;
 #[cfg(unix)] use std::os::unix::process::CommandExt;
 
 static DEV_SERVERS: OnceLock<Mutex<HashMap<String, std::process::Child>>> = OnceLock::new();
+static PREPARED_PROJECTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 fn dev_servers() -> &'static Mutex<HashMap<String, std::process::Child>> {
   DEV_SERVERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn prepared_projects() -> &'static Mutex<HashSet<String>> {
+  PREPARED_PROJECTS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 #[tauri::command]
@@ -120,6 +124,7 @@ fn agent_tools() -> Value {
     {"type":"function","function":{"name":"bash","description":"Run a shell command in the project root. Use for git, npm, tests. Timeout 30s.","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}},
     {"type":"function","function":{"name":"glob","description":"Find files by glob pattern. Returns matching paths.","parameters":{"type":"object","properties":{"pattern":{"type":"string","description":"Glob pattern, e.g. src/**/*.tsx"}},"required":["pattern"]}}},
     {"type":"function","function":{"name":"grep","description":"Search file contents with regex.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"include":{"type":"string","description":"Optional glob to filter files"}},"required":["pattern"]}}},
+    {"type":"function","function":{"name":"memory","description":"Manage durable project-scoped memory. Store only stable preferences, decisions, and conventions; never secrets or temporary progress.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["remember","forget","list"]},"fact":{"type":"string","description":"Concise durable fact for remember/forget."}},"required":["action"]}}},
     {"type":"function","function":{"name":"todowrite","description":"Track progress on multi-step tasks.","parameters":{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed","cancelled"]},"priority":{"type":"string","enum":["high","medium","low"]}},"required":["content","status","priority"]}}},"required":["todos"]}}}
   ])
 }
@@ -456,6 +461,13 @@ fn write_workspace_file(root: String, relative: String, content: String) -> Resu
 }
 
 #[tauri::command]
+fn delete_workspace_file(root: String, relative: String) -> Result<(), String> {
+  let path = workspace_join(&root, &relative)?;
+  if !path.is_file() { return Err(format!("Not a file: {relative}")); }
+  std::fs::remove_file(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn create_workspace_dir(parent: String, name: String) -> Result<String, String> {
   let path = workspace_join(&parent, &name)?;
   std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
@@ -481,6 +493,114 @@ fn detect_dev_port(abs: &std::path::Path, pkg_text: &str) -> u16 {
     }
   }
   if pkg_text.contains("vite") || abs.join("vite.config.js").exists() || abs.join("vite.config.ts").exists() { 5173 } else { 3000 }
+}
+
+#[derive(Clone)]
+struct ProjectRuntime {
+  technology: String,
+  setup: String,
+  run: String,
+  url: String,
+  prerequisites: Vec<(String, String, String)>,
+}
+
+fn read_project_runtime(abs: &std::path::Path) -> Result<ProjectRuntime, String> {
+  let metadata_path = abs.join("codeplus.project.json");
+  if metadata_path.exists() {
+    let text = std::fs::read_to_string(&metadata_path).map_err(|e| format!("Cannot read codeplus.project.json: {e}"))?;
+    let metadata: Value = serde_json::from_str(&text).map_err(|e| format!("Cannot read codeplus.project.json: {e}"))?;
+    let mut url = metadata.get("preview").and_then(|v| v.get("url")).and_then(Value::as_str)
+      .or_else(|| metadata.get("runtime").and_then(|v| v.get("stages")).and_then(Value::as_array).and_then(|stages| stages.iter().find(|stage| stage.get("id").and_then(Value::as_str) == Some("start"))).and_then(|stage| stage.get("url")).and_then(Value::as_str))
+      .unwrap_or("").trim().to_string();
+    let run = metadata.get("commands").and_then(|v| v.get("run")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let technology = metadata.get("technology").and_then(|v| v.get("label")).and_then(Value::as_str).unwrap_or("Project").to_string();
+    let group = metadata.get("technology").and_then(|v| v.get("group")).and_then(Value::as_str).unwrap_or("");
+    if url.is_empty() && matches!(group, "Web frameworks" | "Backend & APIs") && !run.is_empty() {
+      url = if run.contains("vite") { "http://localhost:5173" } else { "http://localhost:3000" }.to_string();
+    }
+    if url.is_empty() || run.is_empty() { return Err(format!("{technology} does not define a browser preview command in codeplus.project.json.")); }
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "The preview URL in codeplus.project.json is invalid.".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") { return Err("The project preview URL must use http or https.".into()); }
+    let mut prerequisites: Vec<(String,String,String)> = metadata.get("runtime").and_then(|v| v.get("prerequisites")).and_then(Value::as_array).map(|items| items.iter().filter_map(|item| {
+      let command = item.get("command")?.as_str()?.to_string();
+      let label = item.get("label").and_then(Value::as_str).unwrap_or(&command).to_string();
+      let hint = item.get("installHint").and_then(Value::as_str).unwrap_or("Install it and add it to PATH.").to_string();
+      Some((command, label, hint))
+    }).collect()).unwrap_or_default();
+    if prerequisites.is_empty() { prerequisites = infer_runtime_prerequisites(&metadata); }
+    return Ok(ProjectRuntime {
+      technology,
+      setup: metadata.get("commands").and_then(|v| v.get("install")).and_then(Value::as_str).unwrap_or("").trim().to_string(),
+      run, url:parsed.to_string(), prerequisites
+    });
+  }
+  let pkg_path = abs.join("package.json");
+  if !pkg_path.exists() { return Err("This project has no CodePlus runtime metadata or package.json dev script.".into()); }
+  let pkg_text = std::fs::read_to_string(&pkg_path).map_err(|e| format!("Cannot read package.json: {e}"))?;
+  let pkg: Value = serde_json::from_str(&pkg_text).map_err(|e| format!("Cannot read package.json: {e}"))?;
+  if pkg.get("scripts").and_then(|s| s.get("dev")).and_then(Value::as_str).is_none() { return Err("No \"dev\" script in package.json".into()); }
+  let port = detect_dev_port(abs, &pkg_text);
+  Ok(ProjectRuntime {
+    technology:"Node.js".into(), setup:if abs.join("node_modules").exists() { String::new() } else { "npm install".into() }, run:"npm run dev".into(), url:format!("http://localhost:{port}/"),
+    prerequisites:vec![("node".into(),"Node.js".into(),"Install the current Node.js LTS release from https://nodejs.org".into()),("npm".into(),"npm".into(),"npm is included with Node.js".into())]
+  })
+}
+
+fn infer_runtime_prerequisites(metadata: &Value) -> Vec<(String,String,String)> {
+  let id = metadata.get("technology").and_then(|v| v.get("id")).and_then(Value::as_str).unwrap_or("");
+  let items: &[(&str,&str,&str)] = match id {
+    "laravel" => &[("php","PHP 8.2+","Install PHP 8.2 or newer and add it to PATH"),("composer","Composer","Install Composer from https://getcomposer.org")],
+    "django" | "flask" | "fastapi" | "streamlit" | "gradio" => &[("python3","Python 3","Install Python 3.11 or newer from https://python.org")],
+    "rails" => &[("ruby","Ruby","Install Ruby"),("bundle","Bundler","Run `gem install bundler`")],
+    "phoenix" => &[("elixir","Elixir","Install Elixir"),("mix","Mix","Mix is included with Elixir")],
+    "gin" => &[("go","Go","Install Go from https://go.dev/dl")],
+    "axum" => &[("cargo","Rust toolchain","Install Rust with rustup from https://rustup.rs")],
+    "spring" => &[("java","Java 21","Install JDK 21 or newer"),("mvn","Maven","Install Apache Maven")],
+    "ktor" => &[("java","Java 21","Install JDK 21 or newer"),("gradle","Gradle","Install Gradle")],
+    "aspnet" => &[("dotnet",".NET SDK","Install the current .NET SDK")],
+    _ => &[("node","Node.js","Install the current Node.js LTS release from https://nodejs.org"),("npm","npm","npm is included with Node.js")]
+  };
+  items.iter().map(|(command,label,hint)| ((*command).into(),(*label).into(),(*hint).into())).collect()
+}
+
+fn repair_generated_laravel_manifest(abs: &std::path::Path) -> Result<bool, String> {
+  let metadata_path = abs.join("codeplus.project.json");
+  let composer_path = abs.join("composer.json");
+  if !metadata_path.exists() || !composer_path.exists() { return Ok(false); }
+  let metadata_text = std::fs::read_to_string(&metadata_path).map_err(|e| format!("Cannot read codeplus.project.json: {e}"))?;
+  let metadata: Value = serde_json::from_str(&metadata_text).map_err(|e| format!("Cannot read codeplus.project.json: {e}"))?;
+  if metadata.get("generatedBy").and_then(Value::as_str) != Some("CodePlus")
+    || metadata.get("technology").and_then(|v| v.get("id")).and_then(Value::as_str) != Some("laravel") {
+    return Ok(false);
+  }
+  let composer_text = std::fs::read_to_string(&composer_path).map_err(|e| format!("Cannot read composer.json: {e}"))?;
+  let mut composer: Value = serde_json::from_str(&composer_text).map_err(|e| format!("Cannot read composer.json: {e}"))?;
+  let Some(require_dev) = composer.get_mut("require-dev").and_then(Value::as_object_mut) else { return Ok(false); };
+  let Some(version) = require_dev.remove("phpunit") else { return Ok(false); };
+  require_dev.entry("phpunit/phpunit".to_string()).or_insert(version);
+  if composer.get("autoload-dev").is_none() {
+    composer["autoload-dev"] = serde_json::json!({ "psr-4": { "Tests\\": "tests/" } });
+  }
+  let repaired = serde_json::to_string_pretty(&composer).map_err(|e| format!("Cannot update composer.json: {e}"))? + "\n";
+  std::fs::write(&composer_path, repaired).map_err(|e| format!("Cannot update composer.json: {e}"))?;
+  Ok(true)
+}
+
+fn runtime_port(runtime: &ProjectRuntime) -> u16 {
+  reqwest::Url::parse(&runtime.url).ok().and_then(|url| url.port_or_known_default()).unwrap_or(3000)
+}
+
+fn command_available(command: &str) -> bool {
+  if command.is_empty() || !command.chars().all(|ch| ch.is_ascii_alphanumeric() || "._+-".contains(ch)) { return false; }
+  #[cfg(unix)] { return Command::new("sh").args(["-c", &format!("command -v {command}")]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false); }
+  #[cfg(windows)] { return Command::new("where").arg(command).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false); }
+}
+
+fn project_path_env(abs: &std::path::Path) -> Option<std::ffi::OsString> {
+  let venv = if cfg!(windows) { abs.join(".venv").join("Scripts") } else { abs.join(".venv").join("bin") };
+  let mut paths = vec![venv];
+  if let Some(current) = std::env::var_os("PATH") { paths.extend(std::env::split_paths(&current)); }
+  std::env::join_paths(paths).ok()
 }
 
 async fn probe_port(client: &Client, port: u16) -> bool {
@@ -522,13 +642,10 @@ fn tail_output(tail: &std::sync::Arc<Mutex<String>>) -> String {
 async fn start_dev_server(root: String) -> Result<String, String> {
   let abs = std::path::PathBuf::from(&root);
   if !abs.is_dir() { return Err(format!("Project folder not found: {}", root)); }
-  let pkg_path = abs.join("package.json");
-  if !pkg_path.exists() { return Err("No package.json in this project".into()); }
-  let pkg_text = std::fs::read_to_string(&pkg_path).map_err(|e| e.to_string())?;
-  let pkg: Value = serde_json::from_str(&pkg_text).map_err(|e| e.to_string())?;
-  if pkg.get("scripts").and_then(|s| s.get("dev")).is_none() { return Err("No \"dev\" script in package.json".into()); }
-  let port = detect_dev_port(&abs, &pkg_text);
-  let url = format!("http://localhost:{}/", port);
+  repair_generated_laravel_manifest(&abs)?;
+  let runtime = read_project_runtime(&abs)?;
+  let port = runtime_port(&runtime);
+  let url = runtime.url.clone();
   let client = Client::builder().timeout(std::time::Duration::from_millis(1200)).build().map_err(|e| e.to_string())?;
   // already tracked & alive → wait until it actually answers
   let tracked_alive = {
@@ -550,23 +667,31 @@ async fn start_dev_server(root: String) -> Result<String, String> {
   }
   // adopt a dev server that is already listening on the project port
   if probe_port(&client, port).await { return Ok(url); }
+  let missing: Vec<String> = runtime.prerequisites.iter().filter(|(command,_,_)| !command_available(command)).map(|(_,label,hint)| format!("{label}: {hint}")).collect();
+  if !missing.is_empty() { return Err(format!("{} prerequisites are missing.\n{}\nAfter installing them, restart CodePlus or retry Start dev server.", runtime.technology, missing.join("\n"))); }
+  let needs_setup = !runtime.setup.is_empty() && !prepared_projects().lock().map_err(|_| "Setup state lock failed".to_string())?.contains(&root);
+  if needs_setup {
+    let mut setup = runtime::shell_command(&runtime.setup);
+    setup.current_dir(&abs);
+    if let Some(value) = project_path_env(&abs) { setup.env("PATH", value); }
+    let out = setup.output().map_err(|e| format!("{} dependency setup could not start: {e}", runtime.technology))?;
+    if !out.status.success() {
+      let stderr = String::from_utf8_lossy(&out.stderr);
+      let stdout = String::from_utf8_lossy(&out.stdout);
+      return Err(format!("{} dependency setup failed.\n{}\n{}", runtime.technology, stdout.trim(), stderr.trim()));
+    }
+    prepared_projects().lock().map_err(|_| "Setup state lock failed".to_string())?.insert(root.clone());
+  }
   // clear stale listeners on the exact port so the dev server can bind
   kill_port(port);
   tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-  // auto-install if node_modules missing
-  if !abs.join("node_modules").exists() {
-    let out = runtime::shell_command("npm install").current_dir(&abs).output()
-      .map_err(|e| format!("Failed to run npm install: {e} — is npm installed?"))?;
-    if !out.status.success() {
-      let stderr = String::from_utf8_lossy(&out.stderr);
-      return Err(format!("npm install failed — {}{}", stderr.trim(), runtime::missing_node_hint(&stderr)));
-    }
-  }
-  let mut cmd = runtime::shell_command(if cfg!(windows) { "npm run dev" } else { "exec npm run dev" });
+  let run_command = if cfg!(windows) { runtime.run.clone() } else { format!("exec {}", runtime.run) };
+  let mut cmd = runtime::shell_command(&run_command);
   #[cfg(unix)] { cmd.process_group(0); }
   cmd.current_dir(&abs).env("PORT", port.to_string()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+  if let Some(value) = project_path_env(&abs) { cmd.env("PATH", value); }
   let mut child = cmd.spawn()
-    .map_err(|e| format!("Failed to start dev server: {e}. Is npm installed? Try installing Node.js from https://nodejs.org"))?;
+    .map_err(|e| format!("Failed to start {} dev server: {e}", runtime.technology))?;
   let tail = std::sync::Arc::new(Mutex::new(String::new()));
   if let Some(out) = child.stdout.take() { let tail = tail.clone(); std::thread::spawn(move || read_tail(out, tail)); }
   if let Some(err) = child.stderr.take() { let tail = tail.clone(); std::thread::spawn(move || read_tail(err, tail)); }
@@ -615,9 +740,7 @@ fn stop_dev_server(root: String) -> Result<(), String> {
   // also kill the project's own dev port (e.g. `next dev -p 9002`) — covers adopted servers
   if !root.is_empty() {
     let abs = std::path::PathBuf::from(&root);
-    if let Ok(pkg_text) = std::fs::read_to_string(abs.join("package.json")) {
-      kill_port(detect_dev_port(&abs, &pkg_text));
-    }
+    if let Ok(runtime) = read_project_runtime(&abs) { kill_port(runtime_port(&runtime)); }
   }
   // also kill anything still listening on default dev ports (covers manually started terminals)
   #[cfg(unix)] { let _ = std::process::Command::new("sh").args(["-c", "lsof -ti:3000,5173 2>/dev/null | xargs kill -9 2>/dev/null || true"]).output(); }
@@ -640,10 +763,7 @@ async fn dev_server_status(root: String) -> Result<bool, String> {
   // also detect a dev server started manually in a terminal (project port first)
   let client = Client::builder().timeout(std::time::Duration::from_millis(900)).build().map_err(|e| e.to_string())?;
   let mut ports = vec![3000u16, 5173];
-  if let Ok(pkg_text) = std::fs::read_to_string(std::path::PathBuf::from(&root).join("package.json")) {
-    let detected = detect_dev_port(&std::path::PathBuf::from(&root), &pkg_text);
-    ports.insert(0, detected);
-  }
+  if let Ok(runtime) = read_project_runtime(&std::path::PathBuf::from(&root)) { ports.insert(0, runtime_port(&runtime)); }
   for port in ports {
     if probe_port(&client, port).await { return Ok(true); }
   }
@@ -1119,7 +1239,7 @@ fn main() {
   let app = tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
-    .invoke_handler(tauri::generate_handler![open_external_url, app_version, check_app_update, install_app_update, ask_model, list_local_models, pull_local_model, delete_local_model, list_provider_models, start_vscode_web, pick_workspace_folder, list_workspace_tree, read_workspace_file, write_workspace_file, create_workspace_dir, run_shell_command, inspect_preview, start_dev_server, stop_dev_server, dev_server_status])
+    .invoke_handler(tauri::generate_handler![open_external_url, app_version, check_app_update, install_app_update, ask_model, list_local_models, pull_local_model, delete_local_model, list_provider_models, start_vscode_web, pick_workspace_folder, list_workspace_tree, read_workspace_file, write_workspace_file, delete_workspace_file, create_workspace_dir, run_shell_command, inspect_preview, start_dev_server, stop_dev_server, dev_server_status])
     .build(tauri::generate_context!())
     .expect("error while building CodePlus");
   app.run(|app_handle, event| {

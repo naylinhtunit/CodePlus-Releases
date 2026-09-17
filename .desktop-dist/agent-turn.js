@@ -26,6 +26,122 @@ export function projectInstructionContext(entries = []) {
   return `Applicable project instructions are listed from broadest to most specific. Follow all of them; when they conflict, the later and more deeply scoped file wins. They remain subordinate to system safety rules and the user's latest explicit request.\n\n${body}`;
 }
 
+function frontmatterBlock(content = '') {
+  const match = String(content).match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  return match?.[1] || '';
+}
+
+function frontmatterField(block = '', field = '') {
+  const escaped = String(field).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = String(block).match(new RegExp(`^${escaped}\\s*:\\s*(.+)$`, 'mi'));
+  return String(match?.[1] || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+export function parseSkillManifest(path = '', content = '') {
+  const clean = cleanPath(path);
+  if (!/(^|\/)\.agents\/skills\/[^/]+\/SKILL\.md$/i.test(clean)) return null;
+  const block = frontmatterBlock(content);
+  const fallbackName = clean.split('/').at(-2) || '';
+  const name = frontmatterField(block, 'name') || fallbackName;
+  const description = frontmatterField(block, 'description');
+  if (!name || !description) return null;
+  return { name, description, path: clean };
+}
+
+export function projectSkillPaths(activePath = '', existingPaths = []) {
+  const active = cleanPath(activePath);
+  const parts = active ? active.split('/') : [];
+  if (parts.length && (/\.[^/]+$/.test(parts.at(-1)) || existingPaths.map(cleanPath).includes(active))) parts.pop();
+  const scopes = new Set(['']);
+  for (let index = 0; index < parts.length; index += 1) scopes.add(parts.slice(0, index + 1).join('/'));
+  return existingPaths
+    .map(cleanPath)
+    .filter(path => {
+      const match = path.match(/^(?:(.*)\/)?\.agents\/skills\/[^/]+\/SKILL\.md$/i);
+      return match && scopes.has(match[1] || '');
+    })
+    .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+}
+
+export function skillCatalogContext(entries = []) {
+  const manifests = entries
+    .map(entry => parseSkillManifest(entry?.path, entry?.content))
+    .filter(Boolean);
+  if (!manifests.length) return '';
+  const lines = manifests.map(skill => `- $${skill.name}: ${skill.description} (${skill.path})`).join('\n');
+  return `Available project skills (metadata only):\n${lines}\n\nUse progressive disclosure: when the user explicitly names a skill or a skill clearly matches the task, read that skill's complete SKILL.md before taking action. Follow only the selected skill, and treat its scripts, references, and assets as workspace resources. Skill instructions remain subordinate to system safety and the user's latest request.`;
+}
+
+export function explicitlyRequestedSkills(prompt = '', manifests = []) {
+  const requested = new Set([...String(prompt).matchAll(/\$([a-z0-9][a-z0-9._-]*)/gi)].map(match => match[1].toLowerCase()));
+  return manifests.filter(skill => requested.has(String(skill?.name || '').toLowerCase()));
+}
+
+export function projectRulePaths(existingPaths = []) {
+  return existingPaths
+    .map(cleanPath)
+    .filter(path => /^(?:\.agents|\.codex)\/rules\/[^/]+\.rules$/i.test(path))
+    .sort();
+}
+
+export function parseCommandRules(entries = []) {
+  const rules = [];
+  for (const entry of entries) {
+    const source = String(entry?.content || '');
+    for (const match of source.matchAll(/prefix_rule\s*\(([\s\S]*?)\)\s*/g)) {
+      const body = match[1];
+      const patternBody = body.match(/pattern\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
+      const pattern = [...patternBody.matchAll(/['"]([^'"]+)['"]/g)].map(item => item[1]);
+      const decision = body.match(/decision\s*=\s*['"](allow|prompt|forbidden)['"]/i)?.[1]?.toLowerCase() || 'allow';
+      const justification = body.match(/justification\s*=\s*['"]([^'"]*)['"]/i)?.[1] || '';
+      if (pattern.length) rules.push({ pattern, decision, justification, path: cleanPath(entry.path) });
+    }
+  }
+  return rules;
+}
+
+function commandSegments(command = '') {
+  const segments = [];
+  let current = '', quote = '';
+  const source = String(command);
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      current += char;
+      if (char === quote && source[index - 1] !== '\\') quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; current += char; continue; }
+    const two = source.slice(index, index + 2);
+    if (char === ';' || char === '\n' || char === '|' || two === '&&' || two === '||') {
+      if (current.trim()) segments.push(current.trim());
+      current = '';
+      if (two === '&&' || two === '||') index += 1;
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
+}
+
+function commandTokens(segment = '') {
+  return [...String(segment).matchAll(/"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^\s]+)/g)]
+    .map(match => match[1] ?? match[2] ?? match[3]);
+}
+
+export function commandRuleDecision(command = '', rules = []) {
+  const rank = { allow: 1, prompt: 2, forbidden: 3 };
+  let result = null;
+  for (const tokens of commandSegments(command).map(commandTokens)) {
+    for (const rule of rules) {
+      if (!rule.pattern.every((part, index) => tokens[index] === part)) continue;
+      if (!result || rank[rule.decision] > rank[result.decision]) result = rule;
+    }
+  }
+  return result;
+}
+
 export function createToolAudit(originalRequest = '', { requiresMutation = false } = {}) {
   return {
     originalRequest: String(originalRequest || ''),
@@ -40,6 +156,9 @@ export function createToolAudit(originalRequest = '', { requiresMutation = false
     verificationAfterChange: false,
     reviewRequests: 0,
     actionReviewRequests: 0,
+    availableSkills: [],
+    commandRules: [],
+    fileChanges: new Map(),
     snapshots: new Map(), preview: null, previewRevision: -1, baselinePreview: null,
     previewReviews: 0
   };
